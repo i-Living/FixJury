@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -206,5 +206,10 @@ class BaselineAdapter:
                     session=settings.llm_session,
                 )
 
+            opened = time.monotonic()
             async with open_sandbox(spec) as handle:
-                return await run_baseline(request, handle, call_model)
+                result = await run_baseline(request, handle, call_model)
+            # The run costs sandbox time, not loop time: the container is alive
+            # from creation to removal, and that is what a run is billed for.
+            lifetime = Decimal(str(round(time.monotonic() - opened, 2)))
+            return replace(result, sandbox_seconds=lifetime)

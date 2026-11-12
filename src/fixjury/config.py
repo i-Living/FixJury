@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     llm_timeout_s: float = 180.0
 
     pricing_file: str = "config/pricing.yaml"
+    # Costs stay zero until pricing lands; the label keeps such rows out of any
+    # cross-version comparison instead of pretending they were priced.
+    pricing_version: str = "unpriced"
 
 
 settings = Settings()
