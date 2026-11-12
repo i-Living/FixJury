@@ -41,3 +41,23 @@ increment, and until then the restriction is documented rather than claimed as a
   platform wrote never appears in the patch; a failing harness still returns its patch with
   `declared_success = false` and the exit code.
 - `fixjury run --agent swe-agent` without an image fails with "no pinned image".
+
+## Registry findings (measured)
+
+What the public registries actually give you, so the next session does not repeat the search:
+
+- `ghcr.io/swe-agent/swe-agent` — **denied**. The manifest request is refused, so the documented
+  `docker pull` cannot work without a login.
+- `docker.io/sweagent/swe-agent-run:latest` — pulls (2.78 GB, digest
+  `sha256:e1581853fc8fa3500cf72b17ec28c69386c9206da01055f74150e36b3e7d0cd4`), but it is a **library**
+  image: `sweagent` 0.7.0, `Cmd=[python3]`, no `[project.scripts]` in its `pyproject.toml`, no
+  `sweagent` executable in `PATH`, and `python3 -m sweagent` fails because there is no `__main__`.
+  Its own Docker Hub description says "Internal (!) image used by swe-agent". Pinning it would pin a
+  thing that cannot be driven as a CLI.
+- `ghcr.io/all-hands-ai/openhands:latest` — manifest is public and pinnable, so OpenHands is the
+  reachable half of 4.1/4.2.
+
+So the remaining route for SWE-agent is to build our own image from a pinned source tag
+(`git clone --depth 1 --branch <tag>` + `pip install -e .`) inside `docker build`, which makes the
+harness version a build argument instead of a registry tag. That is a decision about adding a build
+step to the repo, so it is not taken unasked.
