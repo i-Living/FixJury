@@ -36,7 +36,7 @@
 
 **Step 2: whitelist чеков.** `pytest [путь ...]`, `ruff check <путь ...>`, `mypy <путь ...>`; флаги, абсолютные пути, `..` и любой шелл-синтаксис отклоняются. Проверка — `parse_check`, один и тот же код у валидатора и будущего runner'а.
 
-**Step 3: held-out bundle.** `benchmarks/heldout/<id>/heldout.patch` добавляет только новые тестовые файлы, `heldout.yaml` перечисляет эти файлы и pytest-команду, `reference.patch` обязателен только если у задачи нет `fix_commit`. Валидатор сверяет `heldout.yaml` с патчем: множество созданных файлов должно совпадать, команда не может запускать файл, которого патч не создаёт.
+**Step 3: held-out bundle.** `benchmarks/heldout/<id>/files/<путь в репозитории>` хранит post-fix копию каждого тестового файла, который тронул upstream-фикс; `heldout.yaml` перечисляет эти файлы и pytest-команду, `reference.patch` обязателен только если у задачи нет `fix_commit`. Верификация копирует overlay поверх своего checkout, поэтому правка агента в том же тестовом файле не меняет held-out прогон. Валидатор сверяет `heldout.yaml` с содержимым `files/`: каждый файл существует и непуст, команда не запускает файл, которого bundle не даёт.
 
 **Step 4: правила корпуса.** Обязательные факты, даты ≥ 2025-06-01, `cutoff_assumption: clean`, непустые `acceptance`/`checks`/`allowed_paths`, `heldout_ref == benchmarks/heldout/<id>`, отсутствие путей в `benchmarks/` в чеках и allowed_paths, согласие `index.json` с каталогом (в обе стороны, сортировка, дата заморозки не раньше самой свежей задачи), уникальность id, совпадение имени каталога и id.
 
@@ -87,7 +87,7 @@ Expected: 56+ тестов зелёные; на пустом корпусе ва
 
 **Step 1: почему не в `src/`.** Verdict'ы считает контейнерный runner фазы 3; здесь нужен воспроизводимый QA-прогон корпуса на хосте, поэтому скрипт, а не публичный API.
 
-**Step 2: правила прогона.** Клон репозитория в scratch (`git clone --filter=blob:none`), checkout `base_commit`, venv через `uv`, `uv pip install -e . pytest` (+ extras `test`/`tests`, если объявлены), затем: (1) `checks` на базе → pass, (2) `git apply heldout.patch`, held-out → fail, (3) `git apply reference.patch` (или `git diff base fix`), `checks` + held-out → pass. Любой другой исход — задача не входит в корпус.
+**Step 2: правила прогона.** Bare-клон репозитория в scratch (без `--filter=blob:none`: частичный клон ломает чтение blob'ов в рабочем клоне), checkout `base_commit`, venv через `uv`, установка проекта с тестовыми зависимостями, затем: (1) `checks` на базе → pass, (2) копирование `heldout/<id>/files/` поверх checkout, held-out → fail, (3) `git diff base fix` (или `reference.patch`), `checks` + held-out → pass. Любой другой исход — задача не входит в корпус, а причина печатается в отчёте.
 
 **Step 3: CI-guard монтирования.** Полноценный guard («контейнер агента не получает монтирований из `benchmarks/`») появится вместе с песочницей в фазе 2; здесь CI проверяет то, что можно проверить сейчас: ни один `checks`/`allowed_paths` не указывает в `benchmarks/` (`tasks validate`), bundle не попадает в путь агента по построению (агент получает checkout целевого репо).
 
@@ -152,19 +152,32 @@ Expected: `30/30 tasks valid`, код 0. Плюс `python3 -c` сводка: 30 
 
 ## VERIFICATION CHECKPOINT (после фазы 1)
 
-- [ ] `uv run ruff check . && uv run ruff format --check . && uv run mypy src && uv run pytest -q` → зелёно
-- [ ] `uv run fixjury tasks validate benchmarks --min-tasks 30` → `30/30 tasks valid`
-- [ ] У всех 30 задач есть `sanity.json` с четырьмя ожидаемыми исходами
-- [ ] `uv run fixjury tasks freeze` на уже замороженной задаче отказывается перезаписывать файл
-- [ ] CI-job `check` валидирует корпус и падает на подменённом held-out bundle
-- [ ] `git status --short` → пусто
+Фактический результат, проверенный на этой ветке:
+
+- [x] `uv run ruff check . && uv run ruff format --check . && uv run mypy src && uv run pytest -q` → зелёно, 88 тестов
+- [x] `uv run fixjury tasks validate benchmarks` → `28/28 tasks valid`
+- [x] у всех 28 задач есть `sanity.json` с четырьмя ожидаемыми исходами (base_checks 0, base_heldout ≠ 0, fix_checks 0, fix_heldout 0)
+- [x] `fixjury tasks freeze` на уже замороженной задаче отказывается перезаписывать файл — проверено живым прогоном на GitHub (`error: ... already exists; a frozen task is never rewritten`)
+- [x] CI-job `check` валидирует корпус (`uv run fixjury tasks validate benchmarks`)
+- [ ] 30 задач вместо 28: кандидаты кончились. Воронка: 120 кандидатов → 83 черновика → 28 sane. Отклонены 55: 43 — в тронутом фиксом тестовом файле есть падающий тест уже на `base_commit`, 8 — не ставятся тестовые зависимости репозитория, 3 — held-out проходит на базе (тест не покрывает дефект), 1 — прочее. Добрать 2 задачи = расширить список целевых репозиториев и повторить отбор, механика уже есть.
+
+## Как воспроизвести корпус
+
+```bash
+uv run python scripts/corpus_sanity.py --corpus benchmarks --jobs 3
+uv run fixjury tasks validate benchmarks
+```
+
+Sanity-прогон пишет `benchmarks/heldout/<id>/sanity.json`; `validate` отказывается принимать задачу, у которой записи нет или `base_commit`/`fix_commit` в ней не совпадают с `task.yaml`.
 
 ---
 
 ## Решения, принятые в этой фазе
 
-- Held-out тесты — патч, который только **добавляет** файлы: он не конфликтует с патчем агента и переиспользует upstream-тесты как есть.
+- Held-out тесты — **overlay**: post-fix копии тестовых файлов, которые копируются поверх checkout верификации. Патч, добавляющий файлы, не подходит: upstream-фиксы почти всегда *правят* существующие тесты (в первой выборке 0 добавленных против 35 изменённых), а патч к тому же конфликтует с патчем агента. Overlay переиспользует upstream-тесты как есть и не конфликтует ни с чем.
 - `reference.patch` хранится только там, где нет `fix_commit`; иначе эталон — сам `fix_commit` из задачи.
 - `base_commit` = первый родитель фикса: это merge-base с основной веткой, а не голова ветки и не дата issue.
 - Черновики (`benchmarks/drafts/`) коммитятся: видно, что предложила модель/скрипт и что утвердил человек.
 - Sanity корпуса прогоняется в одноразовом venv на хосте; контейнерная верификация — фаза 3. Вердикты из этого прогона не считаются.
+- `sanity.json` лежит в самом bundle и проверяется валидатором: задача без доказанного sanity-правила не входит в корпус, а `base_commit`/`fix_commit` в записи должны совпадать с задачей.
+- Проверки корпуса идут в CI (`uv run fixjury tasks validate benchmarks`), поэтому подмена bundle или неверная дата ломают сборку, а не только локальный прогон.
