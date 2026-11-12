@@ -10,7 +10,9 @@ import typer
 from fixjury import __version__, queue
 from fixjury.agents.registry import UnknownAgentError, build_adapter
 from fixjury.db import make_engine, make_session_maker, session_scope
-from fixjury.models import Run, RunStatus, Verdict
+from fixjury.metrics.service import MetricsError, compute_snapshot, latest_snapshots
+from fixjury.models import CostBasis, MetricSnapshot, Run, RunStatus, Verdict
+from fixjury.report.markdown import render_agent_table, render_report
 from fixjury.run import RunError, ensure_task, run_task
 from fixjury.tasks.cli import app as tasks_app
 from fixjury.tasks.loader import read_task, task_path
@@ -240,3 +242,92 @@ def worker(
             await engine.dispose()
 
     asyncio.run(go())
+
+
+metrics_app = typer.Typer(no_args_is_help=True, add_completion=False)
+app.add_typer(metrics_app, name="metrics")
+
+
+@metrics_app.command("compute")
+def metrics_compute(
+    agent: Annotated[str, typer.Option("--agent", help="Agent to summarise.")] = "baseline",
+    cost_basis: Annotated[
+        str, typer.Option("--cost-basis", help="list_price or amortized.")
+    ] = "list_price",
+) -> None:
+    """Compute one snapshot from runs + verdicts and store it."""
+
+    try:
+        basis = CostBasis(cost_basis)
+    except ValueError as exc:
+        allowed = ", ".join(item.value for item in CostBasis)
+        typer.echo(f"cost basis must be one of {allowed}", err=True)
+        raise typer.Exit(code=2) from exc
+
+    async def go() -> MetricSnapshot:
+        engine = make_engine()
+        try:
+            async with session_scope(make_session_maker(engine)) as session:
+                return await compute_snapshot(session, agent=agent, cost_basis=basis)
+        finally:
+            await engine.dispose()
+
+    try:
+        snapshot = asyncio.run(go())
+    except MetricsError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    typer.echo(f"snapshot {snapshot.id} agent={snapshot.agent} basis={snapshot.cost_basis.value}")
+    typer.echo(render_agent_table(snapshot.payload))
+
+
+@metrics_app.command("show")
+def metrics_show(
+    agent: Annotated[str | None, typer.Option("--agent", help="Filter by agent.")] = None,
+) -> None:
+    """Print the latest snapshot per agent."""
+
+    async def go() -> list[MetricSnapshot]:
+        engine = make_engine()
+        try:
+            async with session_scope(make_session_maker(engine)) as session:
+                return await latest_snapshots(session, agent=agent)
+        finally:
+            await engine.dispose()
+
+    snapshots = asyncio.run(go())
+    if not snapshots:
+        typer.echo("no snapshots yet: run `fixjury metrics compute` first")
+        raise typer.Exit(code=1)
+    for snapshot in snapshots:
+        typer.echo(render_agent_table(snapshot.payload))
+
+
+@app.command()
+def report(
+    out: Annotated[Path, typer.Option("--out", help="Directory for the report.")] = Path(
+        "docs/report"
+    ),
+    basis: Annotated[str, typer.Option("--basis", help="Cost basis to label.")] = "list_price",
+) -> None:
+    """Render the markdown report from the latest snapshots."""
+
+    async def go() -> list[MetricSnapshot]:
+        engine = make_engine()
+        try:
+            async with session_scope(make_session_maker(engine)) as session:
+                return await latest_snapshots(session, agent=None)
+        finally:
+            await engine.dispose()
+
+    snapshots = asyncio.run(go())
+    if not snapshots:
+        typer.echo("no snapshots yet: run `fixjury metrics compute` first", err=True)
+        raise typer.Exit(code=1)
+    out.mkdir(parents=True, exist_ok=True)
+    target = out / "README.md"
+    target.write_text(
+        render_report([snapshot.payload for snapshot in snapshots], basis=basis),
+        encoding="utf-8",
+    )
+    typer.echo(f"wrote {target} from {len(snapshots)} snapshot(s)")
