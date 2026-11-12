@@ -121,6 +121,7 @@ These are load-bearing. Breaking one silently invalidates published numbers.
 - **Untracked files vanish from a diff.** Capture with `git add -N . && git diff --binary --no-color`; reject binary diffs with an explicit `UNREADABLE_DIFF` rejection instead of dropping them silently.
 - **`base_commit` must be the merge-base**, not the issue date or the branch head, otherwise the diff contains unrelated commits.
 - **Per-tool-call timeout and per-run timeout are different things.** The run cap must kill the container, not only the Python process.
+- **Enum types outlive their tables.** `alembic downgrade` drops tables but leaves PostgreSQL enum types behind, so the next `upgrade` fails with `type ... already exists`. Drop the types explicitly at the end of `downgrade()`.
 - **Containers leak.** `finally: container.remove(force=True)`, and the bench runner reaps leftover containers at start.
 - **opencode-go needs `x-opencode-session`.** The Zen Go endpoint rejects requests without it; every adapter that talks to the provider must send the header, otherwise runs fail as `infra_failed` for no visible reason.
 - **Never mount the platform repo into a sandbox.** The agent gets `target_repo@base_commit` only; mounting FixJury would hand it `benchmarks/heldout` and quietly destroy the benchmark.

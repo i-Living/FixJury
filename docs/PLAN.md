@@ -360,11 +360,11 @@ uv run fixjury report --snapshot <id>
 **0.2 Линтер, типы, тесты.** Конфиг ruff (line-length 100, target py312), mypy (strict для `src`), pytest (`unit`, `integration` маркеры), один smoke-тест.
 *Проверка:* `uv run ruff check . && uv run mypy src && uv run pytest -q` → 1 passed.
 
-**0.3 Инфраструктура.** `docker-compose.yml`: postgres:16, redis:7, healthcheck, volume, `.env.example`.
+**0.3 Инфраструктура.** `docker-compose.yml`: postgres:16, redis:7, healthcheck, volume, `.env.example`. Порты привязаны к `127.0.0.1` и сдвинуты (postgres `55432`, redis `16379`), чтобы не конфликтовать с другими сервисами хоста.
 *Проверка:* `docker compose up -d && docker compose ps` → оба healthy.
 
 **0.4 Схема БД.** Модели из §7, `alembic init`, первая миграция.
-*Проверка:* `uv run alembic upgrade head`; `docker compose exec postgres psql -U fixjury -c '\dt'` → 6 таблиц.
+*Проверка:* `uv run alembic upgrade head`; `docker compose exec postgres psql -U fixjury -d fixjury -c '\dt'` → 6 таблиц приложения + `alembic_version`.
 
 **0.5 CI.** `.github/workflows/ci.yml`: uv sync → ruff → format check → mypy → pytest.
 *Проверка:* зелёный прогон на push.
