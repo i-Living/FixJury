@@ -4,7 +4,7 @@
 
 > A patch that compiles, passes CI and opens a pull request is not a fix. FixJury measures how often a fix survives independent verification and human acceptance — and what one accepted fix actually costs.
 
-**Status: phase 3 of 7 — done.** Toolchain, schema, CI, the corpus tooling (`fixjury tasks validate|freeze|draft`) and a **32-task frozen corpus**. A run executes end to end (`fixjury run --task T-001 --agent baseline`) and is verified in a fresh container (`fixjury verify --run <id>`): the diff is applied to a pristine checkout, the task's checks and the held-out suite run, and a verdict with policy rejections is recorded. Review, metrics and the benchmark run are still ahead. See [`docs/PLAN.md`](docs/PLAN.md).
+**Status: phase 4 of 7 — in progress.** Toolchain, schema, CI, the corpus tooling (`fixjury tasks validate|freeze|draft`) and a **32-task frozen corpus**. A run executes end to end (`fixjury run`, or queued through `fixjury queue add` + `fixjury worker`), is verified in a fresh container (`fixjury verify --run <id>`), and carries list-price cost and an OTel trace id. Third-party adapters, blind review and the metrics report are still ahead. See [`docs/PLAN.md`](docs/PLAN.md).
 
 ---
 
@@ -142,7 +142,7 @@ AGENTS.md        engineering rules for agents working in this repo
 | 1 | 2 | 32 frozen tasks + RepairSpec generator |
 | 2 | 3 | Sandbox, diff capture, baseline agent, `fixjury run` |
 | 3 | 4 | Verification, held-out suite, policy checks, `fixjury verify` |
-| 4 | 5 | SWE-agent and OpenHands adapters, Redis queue, traces |
+| 4 | 5 | Redis queue, worker, cost, traces — adapters next |
 | 5 | 6 | Benchmark run (90 runs) |
 | 6 | 7 | Blind human acceptance + repeat pass |
 | 7 | 8 | Metrics, engineering report, static metrics page on the VPS |

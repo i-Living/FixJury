@@ -25,10 +25,12 @@ from fixjury.agents.base import AgentResult, RunRequest
 from fixjury.agents.baseline import DEFAULT_MAX_STEPS
 from fixjury.agents.registry import build_adapter
 from fixjury.config import settings
+from fixjury.metrics.cost import Pricing, PricingError, load_pricing
 from fixjury.models import CutoffAssumption, Difficulty, Run, RunStatus, Task
 from fixjury.sandbox.container import SandboxError
 from fixjury.spec.render import task_payload
 from fixjury.tasks.schema import TaskDocument
+from fixjury.telemetry import current_trace_id, span
 
 LOGGER = logging.getLogger(__name__)
 WORKSPACE_PREFIX = "fixjury-run-"
@@ -36,6 +38,16 @@ WORKSPACE_PREFIX = "fixjury-run-"
 
 class RunError(RuntimeError):
     """A run cannot be prepared or completed."""
+
+
+def pricing() -> Pricing:
+    """Pricing is configuration: a broken file must not crash a run."""
+
+    try:
+        return load_pricing(Path(settings.pricing_file))
+    except PricingError as exc:
+        LOGGER.warning("pricing file unusable, costing nothing: %s", exc)
+        return Pricing(version="unpriced", currency="USD", models={})
 
 
 def agent_spec_text(document: TaskDocument) -> str:
@@ -177,8 +189,13 @@ async def run_task(
     attempt: int = 1,
     image: str | None = None,
     keep_workspace: bool = False,
+    row: Run | None = None,
 ) -> Run:
-    """Run one agent on one task and persist the row. Returns the stored run."""
+    """Run one agent on one task and persist the row. Returns the stored run.
+
+    ``row`` lets the worker execute a run that already exists (queued) instead of
+    creating a second one, which is what makes a retry idempotent.
+    """
 
     base_commit = document.base_commit
     if not base_commit:
@@ -197,12 +214,23 @@ async def run_task(
         timeout_s=settings.sandbox_timeout_s,
     )
 
+    trace_id: str | None = None
     started_at = datetime.now(UTC)
     status = RunStatus.finished
     result: AgentResult | None = None
     try:
         checkout_base(document.repo, base_commit, workspace)
-        result = await adapter.run(request)
+        with span(
+            "run",
+            {
+                "fixjury.task": document.id,
+                "fixjury.agent": adapter.name,
+                "fixjury.agent_version": adapter.version,
+                "fixjury.base_commit": base_commit,
+            },
+        ):
+            result = await adapter.run(request)
+            trace_id = current_trace_id()
     except (RunError, SandboxError, DockerException) as exc:
         status = RunStatus.infra_failed
         LOGGER.warning("run for %s failed before verification: %s", document.id, exc)
@@ -215,36 +243,46 @@ async def run_task(
             shutil.rmtree(workspace, ignore_errors=True)
 
     model = settings.llm_model or "unknown"
-    row = Run(
+    prices = pricing()
+    digest = config_hash(
         task_id=document.id,
+        base_commit=base_commit,
         agent=adapter.name,
         agent_version=adapter.version,
         model=model,
-        attempt=attempt,
-        status=status,
-        declared_success=None if result is None else result.declared_success,
-        diff=None if result is None else result.diff,
-        diff_sha256=None if result is None else result.diff_sha256,
-        tokens_in=0 if result is None else result.tokens_in,
-        tokens_out=0 if result is None else result.tokens_out,
-        sandbox_seconds=Decimal("0") if result is None else result.sandbox_seconds,
-        cost_list_usd=Decimal("0"),
-        pricing_version=settings.pricing_version,
-        config_hash=config_hash(
-            task_id=document.id,
-            base_commit=base_commit,
-            agent=adapter.name,
-            agent_version=adapter.version,
-            model=model,
-            image=resolved_image,
-            timeout_s=settings.sandbox_timeout_s,
-            max_steps=DEFAULT_MAX_STEPS,
-            pricing_version=settings.pricing_version,
-        ),
-        started_at=started_at,
-        finished_at=finished_at,
+        image=resolved_image,
+        timeout_s=settings.sandbox_timeout_s,
+        max_steps=DEFAULT_MAX_STEPS,
+        pricing_version=prices.version,
     )
+    stored = row if row is not None else Run(task_id=document.id, attempt=attempt)
+    stored.agent = adapter.name
+    stored.agent_version = adapter.version
+    stored.model = model
+    stored.status = status
+    stored.declared_success = None if result is None else result.declared_success
+    stored.diff = None if result is None else result.diff
+    stored.diff_sha256 = None if result is None else result.diff_sha256
+    stored.tokens_in = 0 if result is None else result.tokens_in
+    stored.tokens_out = 0 if result is None else result.tokens_out
+    stored.sandbox_seconds = Decimal("0") if result is None else result.sandbox_seconds
+    stored.cost_list_usd = prices.list_price(
+        model=model,
+        tokens_in=stored.tokens_in,
+        tokens_out=stored.tokens_out,
+        sandbox_seconds=stored.sandbox_seconds,
+    )
+    stored.pricing_version = prices.version
+    stored.trace_id = trace_id
+    stored.config_hash = digest
+    stored.started_at = started_at
+    stored.finished_at = finished_at
+
     await ensure_task(session, document)
-    session.add(row)
+    if row is None:
+        session.add(stored)
     await session.flush()
-    return row
+    return stored
+    session.add(stored)
+    await session.flush()
+    return stored

@@ -29,6 +29,7 @@ from fixjury.sandbox.tools import (
     read_file,
     write_file,
 )
+from fixjury.telemetry import span
 
 PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "baseline_agent.md"
 DEFAULT_MAX_STEPS = 30
@@ -139,7 +140,8 @@ async def run_baseline(
                 unable_reason = None if declared_success else "model reported unable"
                 summary = str(step.arguments.get("summary", ""))
                 break
-            observation = await _apply_step(handle, step)
+            with span("step", {"fixjury.step": steps, "fixjury.tool": step.tool}):
+                observation = await _apply_step(handle, step)
         except (ProtocolError, ToolError) as exc:
             messages.append({"role": "user", "content": f"error: {exc}. Try again."})
             continue
