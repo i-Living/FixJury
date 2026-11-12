@@ -1,0 +1,31 @@
+{
+  "task_id": "T-011",
+  "checked_at": "2026-11-12T15:37:18Z",
+  "python_version": "Python 3.12.14",
+  "tool_versions": {
+    "pytest": "pytest 9.2.0"
+  },
+  "repo": "https://github.com/PyCQA/isort",
+  "base_commit": "a8c000401c64ec3d84e828e4fc5f228d7ad24e0b",
+  "fix_commit": "e971161c55ebbed6c2c9a435d27cc6c832a551e5",
+  "checks": [
+    "pytest tests/unit/test_action_comments.py"
+  ],
+  "heldout_command": "pytest tests/unit/test_action_comments.py",
+  "base_checks": {
+    "exit_code": 0,
+    "summary": "1 passed in 0.17s"
+  },
+  "base_heldout": {
+    "exit_code": 1,
+    "summary": "1 failed, 1 passed in 0.20s"
+  },
+  "fix_checks": {
+    "exit_code": 0,
+    "summary": "2 passed in 0.16s"
+  },
+  "fix_heldout": {
+    "exit_code": 0,
+    "summary": "2 passed in 0.08s"
+  }
+}

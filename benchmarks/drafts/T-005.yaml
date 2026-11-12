@@ -1,0 +1,18 @@
+id: T-005
+repo: https://github.com/Delgan/loguru
+issue:
+  number: 1501
+  url: https://github.com/Delgan/loguru/issues/1501
+title: '`{time:x}` is incorrect for negative timestamps due to toward-zero truncation'
+acceptance:
+- 'The behaviour reported in issue #1501 (`{time:x}` is incorrect for negative timestamps due to toward-zero
+  truncation) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_datetime.py
+allowed_paths:
+- loguru/_datetime.py
+- tests/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-005
+cutoff_assumption: clean

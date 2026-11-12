@@ -1,0 +1,17 @@
+id: T-018
+repo: https://github.com/more-itertools/more-itertools
+issue:
+  number: 1192
+  url: https://github.com/more-itertools/more-itertools/issues/1192
+title: interleave_evenly([]) raises IndexError
+acceptance:
+- 'The behaviour reported in issue #1192 (interleave_evenly([]) raises IndexError) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_more.py
+allowed_paths:
+- more_itertools/more.py
+- tests/
+difficulty: easy
+heldout_ref: benchmarks/heldout/T-018
+cutoff_assumption: clean

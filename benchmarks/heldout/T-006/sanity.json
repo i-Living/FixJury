@@ -1,0 +1,31 @@
+{
+  "task_id": "T-006",
+  "checked_at": "2026-11-12T15:45:08Z",
+  "python_version": "Python 3.12.14",
+  "tool_versions": {
+    "pytest": "pytest 9.1.1"
+  },
+  "repo": "https://github.com/Delgan/loguru",
+  "base_commit": "5672e7d0ad610d70c5e549939b049303edefda19",
+  "fix_commit": "d3c590573edb41884feb206823a47c3a9e14aa68",
+  "checks": [
+    "pytest tests/test_filesink_retention.py tests/test_filesink_rotation.py"
+  ],
+  "heldout_command": "pytest tests/test_filesink_retention.py tests/test_filesink_rotation.py",
+  "base_checks": {
+    "exit_code": 0,
+    "summary": "192 passed, 3 skipped in 33.14s"
+  },
+  "base_heldout": {
+    "exit_code": 1,
+    "summary": "6 failed, 193 passed, 3 skipped in 33.91s"
+  },
+  "fix_checks": {
+    "exit_code": 0,
+    "summary": "199 passed, 3 skipped in 33.95s"
+  },
+  "fix_heldout": {
+    "exit_code": 0,
+    "summary": "199 passed, 3 skipped in 33.43s"
+  }
+}

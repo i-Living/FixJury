@@ -1,0 +1,17 @@
+id: T-017
+repo: https://github.com/more-itertools/more-itertools
+issue:
+  number: 1152
+  url: https://github.com/more-itertools/more-itertools/issues/1152
+title: Minor bug in numeric_range()
+acceptance:
+- 'The behaviour reported in issue #1152 (Minor bug in numeric_range()) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_more.py
+allowed_paths:
+- more_itertools/more.py
+- tests/
+difficulty: easy
+heldout_ref: benchmarks/heldout/T-017
+cutoff_assumption: clean

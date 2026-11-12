@@ -1,0 +1,17 @@
+id: T-022
+repo: https://github.com/asottile/pyupgrade
+issue:
+  number: 1042
+  url: https://github.com/asottile/pyupgrade/issues/1042
+title: annotation unstringifier with implicit concat
+acceptance:
+- 'The behaviour reported in issue #1042 (annotation unstringifier with implicit concat) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/features/typing_pep563_test.py
+allowed_paths:
+- pyupgrade/_plugins/typing_pep563.py
+- tests/features/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-022
+cutoff_assumption: clean

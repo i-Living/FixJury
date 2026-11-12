@@ -1,0 +1,17 @@
+id: T-024
+repo: https://github.com/marshmallow-code/marshmallow
+issue:
+  number: 2891
+  url: https://github.com/marshmallow-code/marshmallow/issues/2891
+title: ValidationError with uppercase `file` URLs
+acceptance:
+- 'The behaviour reported in issue #2891 (ValidationError with uppercase `file` URLs) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_validate.py
+allowed_paths:
+- src/marshmallow/validate.py
+- tests/
+difficulty: easy
+heldout_ref: benchmarks/heldout/T-024
+cutoff_assumption: clean

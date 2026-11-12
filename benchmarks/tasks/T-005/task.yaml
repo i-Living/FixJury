@@ -1,0 +1,221 @@
+id: T-005
+repo: https://github.com/Delgan/loguru
+license: MIT
+base_commit: 8052eff4c1ba86793a6f38ee890a898e902bc1ea
+fix_commit: 5672e7d0ad610d70c5e549939b049303edefda19
+issue:
+  number: 1501
+  url: https://github.com/Delgan/loguru/issues/1501
+  created_at: 2026-08-28
+  fix_merged_at: 2026-08-29
+  body: |-
+    ## Summary
+
+    The `x` token is documented as an epoch timestamp in microseconds.
+
+    Its current implementation is:
+
+    ```python
+    int(dt.timestamp()) * 1000000 + dt.microsecond
+    ```
+
+    This works for non-negative timestamps because `int()` truncation toward zero is equivalent to `floor()` there.
+
+    For negative timestamps with a non-zero fractional part, however, `int()` truncates in the wrong direction.
+
+    For example:
+
+    | datetime (UTC)               |     `timestamp()` |     current result |           expected |
+    | ---------------------------- | ----------------: | -----------------: | -----------------: |
+    | `2023-01-01 00:00:00.000500` | `1672531200.0005` | `1672531200000500` | `1672531200000500` |
+    | `1969-12-31 23:59:59.500000` |            `-0.5` |           `500000` |          `-500000` |
+
+    Since:
+
+    ```python
+    int(-0.5) == 0
+    ```
+
+    the formatter currently computes:
+
+    ```python
+    0 * 1000000 + 500000 == 500000
+    ```
+
+    instead of:
+
+    ```python
+    -500000
+    ```
+
+    This is admittedly an edge case for ordinary real-time logging, but negative POSIX timestamps are valid inputs to Python's aware `datetime.timestamp()`, and `{time:x}` is documented as a microseconds timestamp rather than as a post-epoch-only formatter.
+
+    This can also matter when Loguru is used to format historical events, replayed records, imported data, or patched record timestamps.
+
+    ## Not the same issue as #1440
+
+    This appears separate from #1440.
+
+    That issue concerned an off-by-one result on a positive timestamp (`…0001` vs `…0002`) caused by floating-point precision and is now closed.
+
+    The issue here is specifically the use of toward-zero truncation for the integral-second part of a **negative** timestamp.
+
+    The existing formula appears intentionally designed to avoid the float precision problem of:
+
+    ```python
+    int(dt.timestamp() * 1000000)
+    ```
+
+    for large positive timestamps, as covered by the year-2242 test.
+
+    That approach can be preserved; only the rounding direction of the whole-second component needs to change.
+
+    ## Current code
+
+    ```python
+    # loguru/_datetime.py — _compile_format
+
+    "x": ("%d", lambda t, dt: int(dt.timestamp()) * 1000000 + dt.microsecond),
+    ```
+
+    ## Reproduction
+
+    ```python
+    import io
+    from datetime import timezone
+
+    from loguru import logger
+
+
+    logger.remove()
+
+    buf = io.StringIO()
+    logger.add(buf, format="{time:x}", colorize=False)
+
+
+    def pre_epoch(record):
+        cls = type(record["time"])
+        record["time"] = cls(
+            1969,
+            12,
+            31,
+            23,
+            59,
+            59,
+            500000,
+            tzinfo=timezone.utc,
+        )
+
+
+    logger.patch(pre_epoch).info("")
+
+    print(repr(buf.getvalue()))
+    ```
+
+    Observed with CPython 3.11.2 and Loguru 0.7.3:
+
+    ```text
+    '500000\n'
+    ```
+
+    Expected:
+
+    ```text
+    '-500000\n'
+    ```
+
+    For comparison, the same formatter with:
+
+    ```python
+    2023-01-01 00:00:00.000500 UTC
+    ```
+
+    correctly produces:
+
+    ```text
+    1672531200000500
+    ```
+
+    ## Why this happens
+
+    The problem applies to any negative timestamp with a fractional part.
+
+    For example:
+
+    ```text
+    timestamp = -1.5
+    ```
+
+    The current formula gives:
+
+    ```python
+    int(-1.5) * 1000000 + 500000
+    # -1000000 + 500000
+    # -500000
+    ```
+
+    while the correct epoch-microsecond value is:
+
+    ```text
+    -1500000
+    ```
+
+    So this is not limited to the interval immediately before the Unix epoch; fractional pre-epoch timestamps are systematically shifted by one second.
+
+    ## Suggested fix
+
+    Use floor rather than toward-zero truncation for the whole-second component:
+
+    ```python
+    import math
+
+    "x": (
+        "%d",
+        lambda t, dt: math.floor(dt.timestamp()) * 1000000 + dt.microsecond,
+    ),
+    ```
+
+    For example:
+
+    ```python
+    math.floor(-0.5) * 1000000 + 500000
+    # -1000000 + 500000
+    # -500000
+    ```
+
+    This preserves the existing strategy of avoiding multiplication of the floating-point timestamp by `1e6`, while making the arithmetic correct for negative timestamps as well.
+
+    ## Expected behavior
+
+    ```text
+    1969-12-31 23:59:59.500000 UTC
+    ```
+
+    should format as:
+
+    ```text
+    -500000
+    ```
+
+    with `{time:x}`.
+
+    ## Environment
+
+    - Delgan/loguru `54c89d609fc98a63b5bf7f801119c5bc526e2016`
+    - CPython 3.11.2
+    - Linux x86_64
+title: '`{time:x}` is incorrect for negative timestamps due to toward-zero truncation'
+acceptance:
+- 'The behaviour reported in issue #1501 (`{time:x}` is incorrect for negative timestamps due to toward-zero
+  truncation) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_datetime.py
+allowed_paths:
+- loguru/_datetime.py
+- tests/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-005
+cutoff_assumption: clean
+frozen_at: 2026-11-12T16:00:21+00:00
+frozen_by: owner

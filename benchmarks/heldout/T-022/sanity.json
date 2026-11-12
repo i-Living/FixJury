@@ -1,0 +1,31 @@
+{
+  "task_id": "T-022",
+  "checked_at": "2026-11-12T15:51:01Z",
+  "python_version": "Python 3.12.14",
+  "tool_versions": {
+    "pytest": "pytest 9.2.0"
+  },
+  "repo": "https://github.com/asottile/pyupgrade",
+  "base_commit": "46c3d526905780be88d227f46e19f24f2593fbbe",
+  "fix_commit": "3a1254b1d9ee85380bafa043d0a781be7b5f3c93",
+  "checks": [
+    "pytest tests/features/typing_pep563_test.py"
+  ],
+  "heldout_command": "pytest tests/features/typing_pep563_test.py",
+  "base_checks": {
+    "exit_code": 0,
+    "summary": "43 passed in 0.13s"
+  },
+  "base_heldout": {
+    "exit_code": 1,
+    "summary": "1 failed, 43 passed in 0.10s"
+  },
+  "fix_checks": {
+    "exit_code": 0,
+    "summary": "44 passed in 0.13s"
+  },
+  "fix_heldout": {
+    "exit_code": 0,
+    "summary": "44 passed in 0.11s"
+  }
+}

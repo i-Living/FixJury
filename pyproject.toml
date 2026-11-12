@@ -45,7 +45,8 @@ packages = ["src/fixjury"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-extend-exclude = ["migrations/versions"]
+# Held-out bundles are verbatim upstream test files: data, not code we own.
+extend-exclude = ["migrations/versions", "benchmarks/heldout"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "RUF", "S"]

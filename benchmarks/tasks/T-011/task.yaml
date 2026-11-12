@@ -1,0 +1,34 @@
+id: T-011
+repo: https://github.com/PyCQA/isort
+license: MIT
+base_commit: a8c000401c64ec3d84e828e4fc5f228d7ad24e0b
+fix_commit: e971161c55ebbed6c2c9a435d27cc6c832a551e5
+issue:
+  number: 2569
+  url: https://github.com/PyCQA/isort/issues/2569
+  created_at: 2026-06-29
+  fix_merged_at: 2026-07-16
+  body: "Hi! I'm running `isort` 8.0.1 with Python 3.10.20. It appears that the [sort re-exports (`__all__`)](https://isort.readthedocs.io/en/latest/configuration/options.html#sort-re-exports)\
+    \ configuration does not recognize the `# isort: skip` action comment:\n\n```python\n# reproduction.py\n\
+    \nmy_list = [\"bee\", \"Albatross\", \"Dinosaur\", \"cat\"]\n__all__ = my_list # isort: skip\n```\n\
+    \n```bash\n$ isort --sort-reexports reproduction.py \nERROR: isort failed to parse the given literal\
+    \ __all__ = my_list # isort: skip\n. It's important to note that isort literal sorting only supports\
+    \ simple literals parsable by ast.literal_eval which gave the exception of malformed node or string\
+    \ on line 1: <ast.Name object at 0x107927640>.\n```\n\nI expected `isort` to skip over the `__all__`\
+    \ line and not give an error. I was able to work around the issue using `# isort: off`, but I would\
+    \ prefer to use `# isort: skip` if possible:\n\n```python\n# workaround.py\n\nmy_list = [\"bee\",\
+    \ \"Albatross\", \"Dinosaur\", \"cat\"]\n# isort: off\n__all__ = my_list\n# isort: on\n```"
+title: '`sort_reexports` does not respect `isort: skip`'
+acceptance:
+- 'The behaviour reported in issue #2569 (`sort_reexports` does not respect `isort: skip`) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/unit/test_action_comments.py
+allowed_paths:
+- isort/core.py
+- tests/unit/
+difficulty: easy
+heldout_ref: benchmarks/heldout/T-011
+cutoff_assumption: clean
+frozen_at: 2026-11-12T16:00:44+00:00
+frozen_by: owner

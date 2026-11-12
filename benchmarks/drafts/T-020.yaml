@@ -1,0 +1,18 @@
+id: T-020
+repo: https://github.com/more-itertools/more-itertools
+issue:
+  number: 1252
+  url: https://github.com/more-itertools/more-itertools/issues/1252
+title: split_before/split_after/split_when disagree with themselves on an empty iterable when maxsplit=0
+acceptance:
+- 'The behaviour reported in issue #1252 (split_before/split_after/split_when disagree with themselves
+  on an empty iterable when maxsplit=0) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_more.py
+allowed_paths:
+- more_itertools/more.py
+- tests/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-020
+cutoff_assumption: clean

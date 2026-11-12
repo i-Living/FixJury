@@ -1,0 +1,18 @@
+id: T-023
+repo: https://github.com/marshmallow-code/marshmallow
+issue:
+  number: 2870
+  url: https://github.com/marshmallow-code/marshmallow/issues/2870
+title: '`URL` validator treats custom schemes case-sensitively'
+acceptance:
+- 'The behaviour reported in issue #2870 (`URL` validator treats custom schemes case-sensitively) no longer
+  reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_validate.py
+allowed_paths:
+- src/marshmallow/validate.py
+- tests/
+difficulty: easy
+heldout_ref: benchmarks/heldout/T-023
+cutoff_assumption: clean

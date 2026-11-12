@@ -1,0 +1,3 @@
+command: pytest tests/test_file_proxy.py
+files:
+  - tests/test_file_proxy.py

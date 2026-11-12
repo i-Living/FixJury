@@ -1,0 +1,31 @@
+{
+  "task_id": "T-027",
+  "checked_at": "2026-11-12T15:51:26Z",
+  "python_version": "Python 3.12.14",
+  "tool_versions": {
+    "pytest": "pytest 9.2.0"
+  },
+  "repo": "https://github.com/marshmallow-code/marshmallow",
+  "base_commit": "fea5428567960f15be0c9a3a4b99c0d9bb63848c",
+  "fix_commit": "070dde08bad456e743a0d2e1842c142a799a9568",
+  "checks": [
+    "pytest tests/test_deserialization.py"
+  ],
+  "heldout_command": "pytest tests/test_deserialization.py",
+  "base_checks": {
+    "exit_code": 0,
+    "summary": "380 passed in 1.00s"
+  },
+  "base_heldout": {
+    "exit_code": 1,
+    "summary": "1 failed, 380 passed in 1.22s"
+  },
+  "fix_checks": {
+    "exit_code": 0,
+    "summary": "381 passed in 1.02s"
+  },
+  "fix_heldout": {
+    "exit_code": 0,
+    "summary": "381 passed in 0.58s"
+  }
+}

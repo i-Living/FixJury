@@ -1,0 +1,65 @@
+id: T-012
+repo: https://github.com/PyCQA/isort
+license: MIT
+base_commit: c03ad5d6e1cdffb08bc8d8452fe5b53ea0d11f76
+fix_commit: fb4aeb0f6088092376f0a6eae8f4a8e0a5937066
+issue:
+  number: 2760
+  url: https://github.com/PyCQA/isort/issues/2760
+  created_at: 2026-10-27
+  fix_merged_at: 2026-10-28
+  body: |
+    ### Description
+
+    The built-in `appnexus` profile documents `no_lines_before: 'LOCALFOLDER'` (docs/configuration/profiles.md), but the setting has no effect:
+
+    ```python
+    >>> from isort.settings import Config
+    >>> sorted(Config(profile="appnexus").no_lines_before)
+    ['A', 'C', 'D', 'E', 'F', 'L', 'O', 'R']
+    ```
+
+    The string is passed straight to `frozenset()`, so `no_lines_before` ends up holding the letters of `LOCALFOLDER` instead of the section name, and `output.py`'s `section_name in config.no_lines_before` check is never true.
+
+    ```python
+    >>> import isort
+    >>> src = "import os\n\nimport app\n\nimport app_mod\n\nfrom . import local\n"
+    >>> print(isort.code(src, profile="appnexus", known_first_party=["app"], known_application=["app_mod"]))
+    import os
+
+    import app
+
+    import app_mod
+
+    from . import local
+    ```
+
+    The blank line before `from . import local` should not be there, since the profile says LOCALFOLDER is never preceded by one.
+
+    Passing the same value as a list (`no_lines_before=["LOCALFOLDER"]`) or through `.isort.cfg` (`no_lines_before=LOCALFOLDER`) works, because `_get_config_data()` splits strings with `_as_list()` while `Config.__init__` coerces with `type(default_value)(value)`. The same character-by-character coercion applies to any string spelling passed as a runtime override or inside a profile, for example `Config(no_lines_before="future,stdlib")` or `Config(sections="STDLIB,FIRSTPARTY")`.
+
+    ### Expected behaviour
+
+    `Config(profile="appnexus").no_lines_before == frozenset({"LOCALFOLDER"})`, and the LOCALFOLDER section is not preceded by an empty line, as documented.
+
+    ### Fix
+
+    In the coercion loop in `Config.__init__`, run string values of list-like settings (`frozenset`, `tuple`) through the existing `_as_list()` helper, exactly as the config-file path already does. Non-string inputs are unaffected, including the `Path` tuples in `src_paths`.
+
+    I have a fix with a regression test ready and will open a pull request for it, unless you would rather handle it differently.
+title: '`appnexus` profile: `no_lines_before` has no effect because a string setting value is iterated
+  character by character'
+acceptance:
+- 'The behaviour reported in issue #2760 (`appnexus` profile: `no_lines_before` has no effect because
+  a string setting value is iterated character by character) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/unit/test_settings.py
+allowed_paths:
+- isort/settings.py
+- tests/unit/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-012
+cutoff_assumption: clean
+frozen_at: 2026-11-12T16:00:47+00:00
+frozen_by: owner

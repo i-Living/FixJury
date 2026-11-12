@@ -17,6 +17,15 @@ class Settings(BaseSettings):
     sandbox_memory_mb: int = 2048
     sandbox_timeout_s: int = 1200
 
+    github_api_url: str = "https://api.github.com"
+    github_token: str = ""
+
+    llm_base_url: str = "https://opencode.ai/zen/go/v1"
+    llm_model: str = ""
+    llm_api_key: str = ""
+    llm_session: str = ""
+    llm_timeout_s: float = 180.0
+
     pricing_file: str = "config/pricing.yaml"
 
 

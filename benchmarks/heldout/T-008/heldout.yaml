@@ -1,0 +1,3 @@
+command: pytest tests/test_add_option_colorize.py
+files:
+  - tests/test_add_option_colorize.py

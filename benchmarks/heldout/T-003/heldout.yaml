@@ -1,0 +1,3 @@
+command: pytest tests/test_add_option_format.py
+files:
+  - tests/test_add_option_format.py

@@ -1,0 +1,3 @@
+command: pytest tests/test_datetime.py
+files:
+  - tests/test_datetime.py

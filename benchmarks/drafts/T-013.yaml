@@ -1,0 +1,18 @@
+id: T-013
+repo: https://github.com/more-itertools/more-itertools
+issue:
+  number: 1001
+  url: https://github.com/more-itertools/more-itertools/issues/1001
+title: last() fails if __reversed__ is None, which is the case for the Mapping abc
+acceptance:
+- 'The behaviour reported in issue #1001 (last() fails if __reversed__ is None, which is the case for
+  the Mapping abc) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_more.py
+allowed_paths:
+- more_itertools/more.py
+- tests/
+difficulty: easy
+heldout_ref: benchmarks/heldout/T-013
+cutoff_assumption: clean

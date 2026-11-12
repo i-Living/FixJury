@@ -1,0 +1,42 @@
+id: T-014
+repo: https://github.com/more-itertools/more-itertools
+license: MIT
+base_commit: 145a73ffc552ffad08b552380dba70ff73a8325f
+fix_commit: 5e0a7f46d69156389511d61314e3d737ab2d6b82
+issue:
+  number: 1030
+  url: https://github.com/more-itertools/more-itertools/issues/1030
+  created_at: 2025-07-15
+  fix_merged_at: 2025-08-18
+  body: |-
+    ### Description
+    Interleaves multiple iterables into a single output iterable, but takes the next element from each iterable randomly. The result is an iterable where the relative order of each input iterable is preserved, but the order with respect to each other is randomized.
+
+    ### References
+    I used such a tool when generating a single stream of data from multiple independent input "channels", which is very common in networking.
+
+    ### Examples
+
+    ```python
+    data = [
+        [Packet(channel=ch, ...) for _ in range(packets_per_channel)]
+        for ch in range(num_channels)
+    ]
+    stream = interleave_random(*data)
+    input.send(stream)
+    ```
+title: interleave randomly
+acceptance:
+- 'The behaviour reported in issue #1030 (interleave randomly) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_more.py
+allowed_paths:
+- more_itertools/more.py
+- more_itertools/more.pyi
+- tests/
+difficulty: hard
+heldout_ref: benchmarks/heldout/T-014
+cutoff_assumption: clean
+frozen_at: 2026-11-12T16:01:07+00:00
+frozen_by: owner

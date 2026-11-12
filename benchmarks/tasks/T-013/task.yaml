@@ -1,0 +1,74 @@
+id: T-013
+repo: https://github.com/more-itertools/more-itertools
+license: MIT
+base_commit: c834d6e4a0c4280b7b7750cb0de8dd8acb3d4c2c
+fix_commit: 7de169f7ad39eb1f95f8358225476e6f1a59d3d7
+issue:
+  number: 1001
+  url: https://github.com/more-itertools/more-itertools/issues/1001
+  created_at: 2025-06-17
+  fix_merged_at: 2025-07-14
+  body: |
+    Using `last()` on this class:
+    ```
+    from collections.abc import Mapping
+    from more_itertools import last
+    class MyMapping(Mapping):
+        def __getitem__(self, key):
+            return 1
+        def __iter__(self):
+            return iter([1])
+        def __len__(self):
+            return 1
+
+    print(last(iter(MyMapping())))
+    last(MyMapping())
+    ```
+
+    fails with:
+    ```
+    Traceback (most recent call last):
+      File "/nix/store/q3zqcqwmybfda7895g91d75pzbaqj6s5-python3-3.9.20-env/lib/python3.9/site-packages/more_itertools/more.py", line 271, in last
+        return next(reversed(iterable))
+    TypeError: 'MyMapping' object is not reversible
+
+    During handling of the above exception, another exception occurred:
+
+    Traceback (most recent call last):
+      File "/home/ibriquem/ws/pyshl/repro.py", line 12, in <module>
+        last(MyMapping())
+      File "/nix/store/q3zqcqwmybfda7895g91d75pzbaqj6s5-python3-3.9.20-env/lib/python3.9/site-packages/more_itertools/more.py", line 275, in last
+        raise ValueError(
+    ValueError: last() was called on an empty iterable, and no default value was provided.
+    ```
+
+    While it works if you first call `iter()` on the object.
+
+    This is because `__reversed__` is set to None by the Mapping base class:
+    https://github.com/python/cpython/blob/4f28afe5456d8ed4a6fe0099337487043e29c912/Lib/_collections_abc.py#L792
+
+    I'd expect it to work.
+
+    Maybe [this code](https://github.com/more-itertools/more-itertools/blob/569e0ad654a85c77581b318305edc2eb7c4068ae/more_itertools/more.py#L274) could be changed from:
+    ```
+    if hasattr(iterable, '__reversed__'):
+    ```
+    to:
+    ```
+    if getattr(iterable, '__reversed__', None) is not None:
+    ```
+title: last() fails if __reversed__ is None, which is the case for the Mapping abc
+acceptance:
+- 'The behaviour reported in issue #1001 (last() fails if __reversed__ is None, which is the case for
+  the Mapping abc) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_more.py
+allowed_paths:
+- more_itertools/more.py
+- tests/
+difficulty: easy
+heldout_ref: benchmarks/heldout/T-013
+cutoff_assumption: clean
+frozen_at: 2026-11-12T16:01:02+00:00
+frozen_by: owner

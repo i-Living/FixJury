@@ -1,0 +1,19 @@
+id: T-008
+repo: https://github.com/Delgan/loguru
+issue:
+  number: 1537
+  url: https://github.com/Delgan/loguru/issues/1537
+title: 'CVE-2026-120217: Delgan loguru ANSI Color-Markup _colorizer.py AnsiParser.feed redos'
+acceptance:
+- 'The behaviour reported in issue #1537 (CVE-2026-120217: Delgan loguru ANSI Color-Markup _colorizer.py
+  AnsiParser.feed redos) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_add_option_colorize.py
+allowed_paths:
+- loguru/_colorizer.py
+- loguru/_logger.py
+- tests/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-008
+cutoff_assumption: clean

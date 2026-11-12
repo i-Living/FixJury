@@ -1,0 +1,17 @@
+id: T-026
+repo: https://github.com/marshmallow-code/marshmallow
+issue:
+  number: 2924
+  url: https://github.com/marshmallow-code/marshmallow/issues/2924
+title: Make fields.Number abstract
+acceptance:
+- 'The behaviour reported in issue #2924 (Make fields.Number abstract) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_fields.py tests/test_serialization.py
+allowed_paths:
+- src/marshmallow/fields.py
+- tests/
+difficulty: hard
+heldout_ref: benchmarks/heldout/T-026
+cutoff_assumption: clean

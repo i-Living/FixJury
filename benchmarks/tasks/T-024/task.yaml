@@ -1,0 +1,56 @@
+id: T-024
+repo: https://github.com/marshmallow-code/marshmallow
+license: MIT
+base_commit: 78a94ea0e7ee9f35f8322318064232fe6147f190
+fix_commit: 39e7c833e9c8711a49d6d710f7e3ee5cf2effbbe
+issue:
+  number: 2891
+  url: https://github.com/marshmallow-code/marshmallow/issues/2891
+  created_at: 2026-01-08
+  fix_merged_at: 2026-01-23
+  body: |+
+    ## Issue Description
+    I noticed that when a file URL uses an uppercase scheme (FILE), fields.Url raises a ValidationError, even though the exact same URL with a lowercase scheme (file) works fine. Since URL schemes are  case-insensitive, I’d expect either both to be accepted or both to be rejected.
+
+    For example, HTTPS:// and https:// both work without any issues. This seems related to marshmallow issue #2249 and PR #2800. I’m happy to open a PR to fix this if it makes sense.
+
+    ## Reproducing Code Example
+
+    ```
+    from marshmallow import Schema, fields
+
+    class MySchema(Schema):
+        url = fields.Url(schemes={"file"})
+
+    MySchema().load({"url": "FILE:///path/to/somefile.txt"})
+    ```
+
+    ## Expected Result
+    ```
+    {"url": "FILE:///path/to/somefile.txt"}
+    ```
+    ## Actual Behavior
+    ```
+    Traceback (most recent call last):
+      File "test.py", line 6, in <module>
+        MySchema().load({"url": "FILE:///path/to/somefile.txt"})
+      File ".../site-packages/marshmallow/schema.py", line 730, in load
+        return self._do_load(
+      File ".../site-packages/marshmallow/schema.py", line 938, in _do_load
+        raise exc marshmallow.exceptions.ValidationError: {'url': ['Not a valid URL.']}
+    ```
+
+title: ValidationError with uppercase `file` URLs
+acceptance:
+- 'The behaviour reported in issue #2891 (ValidationError with uppercase `file` URLs) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_validate.py
+allowed_paths:
+- src/marshmallow/validate.py
+- tests/
+difficulty: easy
+heldout_ref: benchmarks/heldout/T-024
+cutoff_assumption: clean
+frozen_at: 2026-11-12T16:02:55+00:00
+frozen_by: owner

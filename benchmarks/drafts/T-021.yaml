@@ -1,0 +1,18 @@
+id: T-021
+repo: https://github.com/Textualize/rich
+issue:
+  number: 4041
+  url: https://github.com/Textualize/rich/issues/4041
+title: '`FileProxy.isatty()` always returns `False` instead of delegating to the proxied file'
+acceptance:
+- 'The behaviour reported in issue #4041 (`FileProxy.isatty()` always returns `False` instead of delegating
+  to the proxied file) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_file_proxy.py
+allowed_paths:
+- rich/file_proxy.py
+- tests/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-021
+cutoff_assumption: clean

@@ -1,0 +1,3 @@
+command: pytest tests/test_ansimarkup_extended.py
+files:
+  - tests/test_ansimarkup_extended.py

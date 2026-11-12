@@ -1,0 +1,18 @@
+id: T-025
+repo: https://github.com/marshmallow-code/marshmallow
+issue:
+  number: 2868
+  url: https://github.com/marshmallow-code/marshmallow/issues/2868
+title: '`fields.Constant` rejects `None` constant values during load'
+acceptance:
+- 'The behaviour reported in issue #2868 (`fields.Constant` rejects `None` constant values during load)
+  no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_deserialization.py
+allowed_paths:
+- src/marshmallow/fields.py
+- tests/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-025
+cutoff_assumption: clean

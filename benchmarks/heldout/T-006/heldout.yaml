@@ -1,0 +1,4 @@
+command: pytest tests/test_filesink_retention.py tests/test_filesink_rotation.py
+files:
+  - tests/test_filesink_retention.py
+  - tests/test_filesink_rotation.py

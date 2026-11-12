@@ -1,0 +1,18 @@
+id: T-027
+repo: https://github.com/marshmallow-code/marshmallow
+issue:
+  number: 2900
+  url: https://github.com/marshmallow-code/marshmallow/issues/2900
+title: '`fields.Constant` with `required=True` flag raised `load_default` warning'
+acceptance:
+- 'The behaviour reported in issue #2900 (`fields.Constant` with `required=True` flag raised `load_default`
+  warning) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_deserialization.py
+allowed_paths:
+- src/marshmallow/fields.py
+- tests/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-027
+cutoff_assumption: clean

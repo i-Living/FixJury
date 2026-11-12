@@ -1,0 +1,33 @@
+id: T-027
+repo: https://github.com/marshmallow-code/marshmallow
+license: MIT
+base_commit: fea5428567960f15be0c9a3a4b99c0d9bb63848c
+fix_commit: 070dde08bad456e743a0d2e1842c142a799a9568
+issue:
+  number: 2900
+  url: https://github.com/marshmallow-code/marshmallow/issues/2900
+  created_at: 2026-02-17
+  fix_merged_at: 2026-03-25
+  body: |-
+    I have a schema containing a `Constant`, with `required=True` set, as the schema is ultimately exported to an OpenAPI spec, and the field must be marked as `required` there.
+
+    The fix from #2894 now triggers the validation failure in https://github.com/marshmallow-code/marshmallow/blob/2a3812d5049c83e98db60a0869919521f97cd77d/src/marshmallow/fields.py#L216
+
+    My feeling on the fix is to undo the changes from #2894 and instead reproduce the `allow_none` flag initialization in `Constant.__init__`
+
+    Happy to create a PR if you'd be happy with this fix.
+title: '`fields.Constant` with `required=True` flag raised `load_default` warning'
+acceptance:
+- 'The behaviour reported in issue #2900 (`fields.Constant` with `required=True` flag raised `load_default`
+  warning) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_deserialization.py
+allowed_paths:
+- src/marshmallow/fields.py
+- tests/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-027
+cutoff_assumption: clean
+frozen_at: 2026-11-12T16:03:05+00:00
+frozen_by: owner

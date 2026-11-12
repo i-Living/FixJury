@@ -1,0 +1,18 @@
+id: T-006
+repo: https://github.com/Delgan/loguru
+issue:
+  number: 1502
+  url: https://github.com/Delgan/loguru/issues/1502
+title: Out-of-range duration strings for `rotation` / `retention` leak `OverflowError` from `datetime.timedelta`
+acceptance:
+- 'The behaviour reported in issue #1502 (Out-of-range duration strings for `rotation` / `retention` leak
+  `OverflowError` from `datetime.timedelta`) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_filesink_retention.py tests/test_filesink_rotation.py
+allowed_paths:
+- loguru/_string_parsers.py
+- tests/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-006
+cutoff_assumption: clean

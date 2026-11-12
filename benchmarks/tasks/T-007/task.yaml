@@ -1,0 +1,52 @@
+id: T-007
+repo: https://github.com/Delgan/loguru
+license: MIT
+base_commit: 12b0479b86630d38a3fc42586a545c4e75e00b84
+fix_commit: bce5dfd3b435b1d1658507d7e095ad7a9919bf1c
+issue:
+  number: 1527
+  url: https://github.com/Delgan/loguru/issues/1527
+  created_at: 2026-10-17
+  fix_merged_at: 2026-10-17
+  body: |
+    When a standard-library `logging.Handler` is added with `enqueue=True`, its `LogRecord.thread` and `threadName` describe Loguru's queue consumer (`loguru-writer-0`), rather than the thread that called `logger.info()`. With `enqueue=False`, they describe the producer as expected. A `logging.Filter` selecting the producer thread can therefore silently drop queued messages.
+
+    Minimal example:
+
+    ```python
+    import logging
+    import sys
+    from threading import Thread
+
+    from loguru import logger
+
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter("%(threadName)s %(message)s"))
+    logger.add(handler, format="{message}", enqueue=True)
+
+    thread = Thread(target=logger.info, args=("hello",), name="producer")
+    thread.start()
+    thread.join()
+    logger.complete()
+    ```
+
+    Expected: `producer hello`. Actual: `loguru-writer-0 hello`.
+
+    Reproduced with Loguru 0.7.3, Python 3.11.16, macOS 27.0 (arm64). The queued record already retains the originating thread in `message.record["thread"]`; copying its ID and name to the standard `LogRecord` before handler filtering appears to preserve the expected behavior. This should respect `logging.logThreads=False`.
+
+    AI assistance was used to prepare this report and the reproducer.
+title: Queued standard handlers use the consumer thread instead of the producer thread
+acceptance:
+- 'The behaviour reported in issue #1527 (Queued standard handlers use the consumer thread instead of
+  the producer thread) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_standard_handler.py
+allowed_paths:
+- loguru/_simple_sinks.py
+- tests/
+difficulty: hard
+heldout_ref: benchmarks/heldout/T-007
+cutoff_assumption: clean
+frozen_at: 2026-11-12T16:00:28+00:00
+frozen_by: owner

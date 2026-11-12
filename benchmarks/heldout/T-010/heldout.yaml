@@ -1,0 +1,3 @@
+command: pytest tests/unit/test_hooks.py
+files:
+  - tests/unit/test_hooks.py

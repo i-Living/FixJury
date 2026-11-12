@@ -1,0 +1,17 @@
+id: T-001
+repo: https://github.com/Delgan/loguru
+issue:
+  number: 1426
+  url: https://github.com/Delgan/loguru/issues/1426
+title: Incorrect hex color short code handling
+acceptance:
+- 'The behaviour reported in issue #1426 (Incorrect hex color short code handling) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_ansimarkup_extended.py
+allowed_paths:
+- loguru/_colorizer.py
+- tests/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-001
+cutoff_assumption: clean

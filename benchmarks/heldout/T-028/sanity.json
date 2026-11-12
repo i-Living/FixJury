@@ -1,0 +1,31 @@
+{
+  "task_id": "T-028",
+  "checked_at": "2026-11-12T15:51:25Z",
+  "python_version": "Python 3.12.14",
+  "tool_versions": {
+    "pytest": "pytest 9.2.0"
+  },
+  "repo": "https://github.com/marshmallow-code/marshmallow",
+  "base_commit": "070dde08bad456e743a0d2e1842c142a799a9568",
+  "fix_commit": "65374df0c31cdc45acc4435741779298201306a2",
+  "checks": [
+    "pytest tests/test_validate.py"
+  ],
+  "heldout_command": "pytest tests/test_validate.py",
+  "base_checks": {
+    "exit_code": 0,
+    "summary": "199 passed in 0.50s"
+  },
+  "base_heldout": {
+    "exit_code": 1,
+    "summary": "1 failed, 198 passed in 0.53s"
+  },
+  "fix_checks": {
+    "exit_code": 0,
+    "summary": "199 passed in 0.49s"
+  },
+  "fix_heldout": {
+    "exit_code": 0,
+    "summary": "199 passed in 0.26s"
+  }
+}

@@ -1,0 +1,3 @@
+command: pytest tests/features/typing_pep563_test.py
+files:
+  - tests/features/typing_pep563_test.py

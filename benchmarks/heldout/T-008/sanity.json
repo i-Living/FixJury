@@ -1,0 +1,31 @@
+{
+  "task_id": "T-008",
+  "checked_at": "2026-11-12T15:47:46Z",
+  "python_version": "Python 3.12.14",
+  "tool_versions": {
+    "pytest": "pytest 9.1.1"
+  },
+  "repo": "https://github.com/Delgan/loguru",
+  "base_commit": "874aa41019f8a9f943647a0c74445fb7844157da",
+  "fix_commit": "4e7762bcb44862fce877b1f90f19063834509575",
+  "checks": [
+    "pytest tests/test_add_option_colorize.py"
+  ],
+  "heldout_command": "pytest tests/test_add_option_colorize.py",
+  "base_checks": {
+    "exit_code": 0,
+    "summary": "19 passed in 0.19s"
+  },
+  "base_heldout": {
+    "exit_code": 1,
+    "summary": "1 failed, 19 passed in 271.89s (0:04:31)"
+  },
+  "fix_checks": {
+    "exit_code": 0,
+    "summary": "20 passed in 0.16s"
+  },
+  "fix_heldout": {
+    "exit_code": 0,
+    "summary": "20 passed in 0.15s"
+  }
+}

@@ -1,0 +1,18 @@
+id: T-015
+repo: https://github.com/more-itertools/more-itertools
+issue:
+  number: 1098
+  url: https://github.com/more-itertools/more-itertools/issues/1098
+title: Decorator version of serialize()
+acceptance:
+- 'The behaviour reported in issue #1098 (Decorator version of serialize()) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_more.py
+allowed_paths:
+- more_itertools/more.py
+- more_itertools/more.pyi
+- tests/
+difficulty: hard
+heldout_ref: benchmarks/heldout/T-015
+cutoff_assumption: clean

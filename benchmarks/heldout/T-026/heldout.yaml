@@ -1,0 +1,4 @@
+command: pytest tests/test_fields.py tests/test_serialization.py
+files:
+  - tests/test_fields.py
+  - tests/test_serialization.py
