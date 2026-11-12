@@ -63,6 +63,8 @@ def _run(
         )
     except subprocess.TimeoutExpired:
         return 124, f"timed out after {timeout}s"
+    except OSError as exc:
+        return 127, f"cannot run {args[0]}: {exc}"
     return completed.returncode, completed.stdout + completed.stderr
 
 
@@ -87,7 +89,7 @@ def bare_clone(repo: str, cache: Path) -> Path:
     if (bare / "HEAD").exists():
         return bare
     code, output = _run(
-        [_tool("git"), "clone", "--bare", "--filter=blob:none", repo, str(bare)],
+        [_tool("git"), "clone", "--bare", repo, str(bare)],
         cwd=cache,
         timeout=INSTALL_TIMEOUT_S,
     )
@@ -99,6 +101,7 @@ def bare_clone(repo: str, cache: Path) -> Path:
 def checkout(bare: Path, commit: str, destination: Path) -> None:
     if destination.exists():
         shutil.rmtree(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
     code, output = _run(
         [_tool("git"), "clone", "--no-checkout", "--shared", str(bare), str(destination)],
         cwd=destination.parent,
@@ -375,8 +378,8 @@ def main(argv: list[str] | None = None) -> int:
     def work(document: TaskDocument) -> tuple[str, SanityResult | None, str]:
         try:
             result = check_task(document, corpus, runner, cache)
-        except RuntimeError as exc:
-            return document.id, None, str(exc)
+        except Exception as exc:  # one broken task must not stop the batch
+            return document.id, None, f"{type(exc).__name__}: {exc}"
         if runner.write_evidence:
             write_sanity(heldout_path(corpus, document.id) / SANITY_FILENAME, result)
         return document.id, result, ""
