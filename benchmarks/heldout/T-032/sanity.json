@@ -1,0 +1,31 @@
+{
+  "task_id": "T-032",
+  "checked_at": "2026-11-12T16:50:31Z",
+  "python_version": "Python 3.12.14",
+  "tool_versions": {
+    "pytest": "pytest 9.2.0"
+  },
+  "repo": "https://github.com/pypa/packaging",
+  "base_commit": "c4fb81ff6eba16fdd24d50e9d9d002fdbece6dd4",
+  "fix_commit": "0a85b41e24c9b55b83f05ae696d73e8294a5b094",
+  "checks": [
+    "pytest tests/test_markers.py"
+  ],
+  "heldout_command": "pytest tests/test_markers.py",
+  "base_checks": {
+    "exit_code": 0,
+    "summary": "2280 passed in 3.35s"
+  },
+  "base_heldout": {
+    "exit_code": 1,
+    "summary": "1 failed, 2280 passed in 1.93s"
+  },
+  "fix_checks": {
+    "exit_code": 0,
+    "summary": "2281 passed in 1.58s"
+  },
+  "fix_heldout": {
+    "exit_code": 0,
+    "summary": "2281 passed in 1.83s"
+  }
+}

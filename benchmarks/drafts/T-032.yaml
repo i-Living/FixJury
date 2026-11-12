@@ -1,0 +1,18 @@
+id: T-032
+repo: https://github.com/pypa/packaging
+issue:
+  number: 1315
+  url: https://github.com/pypa/packaging/issues/1315
+title: '`str(Marker(...))` drops parentheses of a nested group and changes evaluation'
+acceptance:
+- 'The behaviour reported in issue #1315 (`str(Marker(...))` drops parentheses of a nested group and changes
+  evaluation) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_markers.py
+allowed_paths:
+- src/packaging/markers.py
+- tests/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-032
+cutoff_assumption: clean

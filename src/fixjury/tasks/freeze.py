@@ -8,10 +8,13 @@ dates. Freezing copies the facts in and refuses to overwrite a frozen file.
 
 from __future__ import annotations
 
+import base64
 import datetime as dt
 import os
+import re
 import shutil
 import subprocess
+import tomllib
 from dataclasses import dataclass
 
 import httpx
@@ -20,6 +23,8 @@ from fixjury.github import (
     JsonObject,
     get_array,
     get_object,
+    get_optional_array,
+    get_optional_object,
     optional_object,
     optional_string,
     repo_api_url,
@@ -32,6 +37,62 @@ from fixjury.tasks.schema import ALLOWED_LICENSES, CUTOFF_DATE, TaskDocument
 
 class FreezeError(RuntimeError):
     """The draft cannot be frozen as it stands."""
+
+
+LICENSE_FILE_CANDIDATES = ("LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING", "COPYING.txt")
+
+# GitHub reports NOASSERTION for a dual-licensed repository or a non-standard
+# LICENSE header, so the identifier is resolved from the licence text itself.
+# These are the canonical opening clauses, not a heuristic guess.
+LICENSE_SIGNATURES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Apache-2.0", ("apache license", "version 2.0")),
+    (
+        "BSD-3-Clause",
+        ("redistribution and use in source and binary forms", "neither the name of"),
+    ),
+    (
+        "MIT",
+        ("permission is hereby granted, free of charge", "the above copyright notice"),
+    ),
+)
+
+
+def detect_license(text: str) -> str | None:
+    """Return the SPDX id whose canonical text is present, or ``None``."""
+
+    lowered = text.lower()
+    for spdx, needles in LICENSE_SIGNATURES:
+        if all(needle in lowered for needle in needles):
+            return spdx
+    return None
+
+
+def _allowed_from_expression(value: str) -> str | None:
+    """Pick an allowed licence from an SPDX expression such as ``MIT OR Apache-2.0``."""
+
+    parts = [part.strip().strip("()") for part in re.split(r"\s+OR\s+", value, flags=re.IGNORECASE)]
+    for part in parts:
+        if part in ALLOWED_LICENSES:
+            return part
+    return None
+
+
+def _license_from_pyproject(text: str) -> str | None:
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return None
+    project = data.get("project")
+    if not isinstance(project, dict):
+        return None
+    declared = project.get("license")
+    if isinstance(declared, str):
+        return _allowed_from_expression(declared)
+    if isinstance(declared, dict):
+        text_value = declared.get("text")
+        if isinstance(text_value, str):
+            return _allowed_from_expression(text_value)
+    return None
 
 
 @dataclass(frozen=True)
@@ -84,7 +145,8 @@ async def collect_facts(
     repository = await get_object(client, api, token=token)
     license_object = optional_object(repository, "license") or {}
     license_id = optional_string(license_object, "spdx_id")
-    if license_id is None or license_id not in ALLOWED_LICENSES:
+    unknown_license = license_id is None or license_id == "NOASSERTION"
+    if not unknown_license and license_id not in ALLOWED_LICENSES:
         allowed = ", ".join(ALLOWED_LICENSES)
         raise FreezeError(f"repository license {license_id!r} is not one of {allowed}")
     default_branch = require_string(repository, "default_branch", context="repository")
@@ -125,6 +187,17 @@ async def collect_facts(
         raise FreezeError(f"commit {resolved_commit} has no parents; cannot derive base_commit")
     base_commit = require_string(parents[0], "sha", context="commit.parents[0]")
 
+    if unknown_license:
+        license_id = await _license_from_repository(
+            client=client, api=api, token=token, commit=resolved_commit
+        )
+    if license_id is None:
+        allowed = ", ".join(ALLOWED_LICENSES)
+        raise FreezeError(
+            f"repository license is unknown to GitHub and none of {allowed} was found "
+            f"in LICENSE or pyproject.toml at {resolved_commit[:7]}"
+        )
+
     return FreezeFacts(
         repo=repo_url.rstrip("/"),
         license=license_id,
@@ -138,6 +211,64 @@ async def collect_facts(
         fix_commit=resolved_commit,
         fix_merged_at=merged_at.date(),
     )
+
+
+async def _license_from_repository(
+    *, client: httpx.AsyncClient, api: str, token: str, commit: str
+) -> str | None:
+    """Resolve the SPDX id from the licence text when GitHub cannot."""
+
+    for name in await _license_file_names(client=client, api=api, token=token, commit=commit):
+        text = await _file_text(client=client, api=api, token=token, path=name, ref=commit)
+        if text is None:
+            continue
+        detected = detect_license(text)
+        if detected is not None:
+            return detected
+    pyproject = await _file_text(
+        client=client, api=api, token=token, path="pyproject.toml", ref=commit
+    )
+    if pyproject is not None:
+        return _license_from_pyproject(pyproject)
+    return None
+
+
+async def _license_file_names(
+    *, client: httpx.AsyncClient, api: str, token: str, commit: str
+) -> list[str]:
+    """List the licence files at the repository root, common spellings first."""
+
+    listing = await get_optional_array(
+        client, f"{api}/contents", token=token, params={"ref": commit}
+    )
+    if listing is None:
+        return list(LICENSE_FILE_CANDIDATES)
+    names = [
+        require_string(entry, "name", context="contents")
+        for entry in listing
+        if optional_string(entry, "type") == "file"
+        and optional_string(entry, "name") is not None
+        and str(entry["name"]).upper().startswith(("LICENSE", "COPYING", "UNLICENSE"))
+    ]
+    names.sort(key=lambda name: (name.upper() not in LICENSE_FILE_CANDIDATES, name))
+    return names or list(LICENSE_FILE_CANDIDATES)
+
+
+async def _file_text(
+    *, client: httpx.AsyncClient, api: str, token: str, path: str, ref: str
+) -> str | None:
+    payload = await get_optional_object(
+        client, f"{api}/contents/{path}", token=token, params={"ref": ref}
+    )
+    if payload is None:
+        return None
+    content = optional_string(payload, "content")
+    if content is None:
+        return None
+    try:
+        return base64.b64decode(content).decode("utf-8", errors="replace")
+    except (ValueError, TypeError):
+        return None
 
 
 async def _resolve_fix(
