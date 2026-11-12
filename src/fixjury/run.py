@@ -21,7 +21,7 @@ from pathlib import Path
 from docker.errors import DockerException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fixjury.agents.base import AgentResult, RunRequest
+from fixjury.agents.base import AgentResult, LlmConfig, RunRequest
 from fixjury.agents.baseline import DEFAULT_MAX_STEPS
 from fixjury.agents.registry import build_adapter
 from fixjury.config import settings
@@ -212,6 +212,12 @@ async def run_task(
         image=resolved_image,
         max_steps=DEFAULT_MAX_STEPS,
         timeout_s=settings.sandbox_timeout_s,
+        llm=LlmConfig(
+            base_url=settings.llm_base_url,
+            model=settings.llm_model,
+            api_key=settings.llm_api_key,
+            session=settings.llm_session,
+        ),
     )
 
     trace_id: str | None = None

@@ -27,6 +27,15 @@ class Settings(BaseSettings):
     llm_session: str = ""
     llm_timeout_s: float = 180.0
 
+    # Third-party harnesses: the image and the command are configuration, never
+    # guessed. An empty image means "this adapter is not configured yet".
+    swe_agent_image: str = ""
+    swe_agent_command: str = ""
+    swe_agent_version: str = ""
+    openhands_image: str = ""
+    openhands_command: str = ""
+    openhands_version: str = ""
+
     pricing_file: str = "config/pricing.yaml"
     # Costs stay zero until pricing lands; the label keeps such rows out of any
     # cross-version comparison instead of pretending they were priced.
