@@ -1,0 +1,3 @@
+command: pytest tests/test_termui.py
+files:
+  - tests/test_termui.py

@@ -1,0 +1,19 @@
+id: T-031
+repo: https://github.com/pallets/click
+issue:
+  number: 3731
+  url: https://github.com/pallets/click/issues/3731
+title: echo_via_pager on Windows fails with WinError 32, masking a TypeError from writing str to a binary
+  temp file (8.4.0 regression)
+acceptance:
+- 'The behaviour reported in issue #3731 (echo_via_pager on Windows fails with WinError 32, masking a
+  TypeError from writing str to a binary temp file (8.4.0 regression)) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_termui.py
+allowed_paths:
+- src/click/_termui_impl.py
+- tests/
+difficulty: hard
+heldout_ref: benchmarks/heldout/T-031
+cutoff_assumption: clean

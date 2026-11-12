@@ -155,11 +155,11 @@ Expected: `30/30 tasks valid`, код 0. Плюс `python3 -c` сводка: 30 
 Фактический результат, проверенный на этой ветке:
 
 - [x] `uv run ruff check . && uv run ruff format --check . && uv run mypy src && uv run pytest -q` → зелёно, 88 тестов
-- [x] `uv run fixjury tasks validate benchmarks` → `28/28 tasks valid`
-- [x] у всех 28 задач есть `sanity.json` с четырьмя ожидаемыми исходами (base_checks 0, base_heldout ≠ 0, fix_checks 0, fix_heldout 0)
+- [x] `uv run fixjury tasks validate benchmarks` → `31/31 tasks valid`
+- [x] у всех 31 задачи есть `sanity.json` с четырьмя ожидаемыми исходами (base_checks 0, base_heldout ≠ 0, fix_checks 0, fix_heldout 0)
 - [x] `fixjury tasks freeze` на уже замороженной задаче отказывается перезаписывать файл — проверено живым прогоном на GitHub (`error: ... already exists; a frozen task is never rewritten`)
 - [x] CI-job `check` валидирует корпус (`uv run fixjury tasks validate benchmarks`)
-- [ ] 30 задач вместо 28: кандидаты кончились. Воронка: 120 кандидатов → 83 черновика → 28 sane. Отклонены 55: 43 — в тронутом фиксом тестовом файле есть падающий тест уже на `base_commit`, 8 — не ставятся тестовые зависимости репозитория, 3 — held-out проходит на базе (тест не покрывает дефект), 1 — прочее. Добрать 2 задачи = расширить список целевых репозиториев и повторить отбор, механика уже есть.
+- [x] 31 задача из 7 репозиториев (loguru, more-itertools, marshmallow, isort, pyupgrade, rich, click). Воронка: 247 кандидатов от разведки → 104 черновика → 31 sane. Отклонены 73: 58 — в тронутом фиксом тестовом файле уже есть падающий тест на `base_commit` (flake), 8 — не ставятся тестовые зависимости репозитория, 6 — held-out проходит на базе (тест не покрывает дефект), 1 — прочее.
 
 ## Как воспроизвести корпус
 

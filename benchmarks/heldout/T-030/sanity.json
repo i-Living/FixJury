@@ -1,0 +1,31 @@
+{
+  "task_id": "T-030",
+  "checked_at": "2026-11-12T16:24:51Z",
+  "python_version": "Python 3.12.14",
+  "tool_versions": {
+    "pytest": "pytest 9.2.0"
+  },
+  "repo": "https://github.com/pallets/click",
+  "base_commit": "8b44edfff7d9a6c895fa804148c16b3a0bc9efb5",
+  "fix_commit": "150d1071d69c5cdad7de78590013ffe56cf9e3bb",
+  "checks": [
+    "pytest tests/test_termui.py"
+  ],
+  "heldout_command": "pytest tests/test_termui.py",
+  "base_checks": {
+    "exit_code": 0,
+    "summary": "225 passed, 23 skipped in 0.47s"
+  },
+  "base_heldout": {
+    "exit_code": 1,
+    "summary": "6 failed, 231 passed, 23 skipped in 0.68s"
+  },
+  "fix_checks": {
+    "exit_code": 0,
+    "summary": "237 passed, 23 skipped in 0.51s"
+  },
+  "fix_heldout": {
+    "exit_code": 0,
+    "summary": "237 passed, 23 skipped in 0.34s"
+  }
+}
