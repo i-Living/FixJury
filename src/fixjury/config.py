@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     sandbox_cpu: float = 2.0
     sandbox_memory_mb: int = 2048
     sandbox_timeout_s: int = 1200
+    sandbox_output_limit: int = 20000
 
     github_api_url: str = "https://api.github.com"
     github_token: str = ""
