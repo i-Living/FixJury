@@ -31,7 +31,9 @@ class FakeContainer:
     calls: list[tuple[list[str], str | None]] = field(default_factory=list)
     archives: list[tuple[str, bytes]] = field(default_factory=list)
 
-    def exec_run(self, cmd: list[str], workdir: str | None = None) -> SimpleNamespace:
+    def exec_run(
+        self, cmd: list[str], workdir: str | None = None, environment: dict[str, str] | None = None
+    ) -> SimpleNamespace:
         self.calls.append((list(cmd), workdir))
         return SimpleNamespace(output=self.output, exit_code=self.exit_code)
 

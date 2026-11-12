@@ -1,0 +1,237 @@
+"""Verification runner: fresh container, applied diff, checks, held-out (PLAN §11).
+
+Two containers per verification, and the split is the point:
+
+1. a *prepare* container **with** network, which creates a virtualenv inside the
+   workspace and installs the project and its test dependencies;
+2. a *verify* container **without** network, which applies nothing and installs
+   nothing — it only runs the checks and the held-out suite against the tree the
+   first container prepared.
+
+Installing dependencies needs the network; running an untrusted patch does not,
+and the patch is only executed in the second container. The held-out files are
+copied in between the two, after the agent's diff is applied, so a patch cannot
+overwrite the tests that judge it.
+"""
+
+from __future__ import annotations
+
+import logging
+import shutil
+import subprocess
+from pathlib import Path
+
+from fixjury.models import RejectionCode
+from fixjury.run import checkout_base
+from fixjury.sandbox.container import SandboxSpec, open_sandbox
+from fixjury.sandbox.tools import ExecResult, exec_command
+from fixjury.tasks.heldout import HELDOUT_FILES_DIRNAME, read_heldout
+from fixjury.tasks.schema import CheckTool, TaskDocument, parse_check
+from fixjury.verify.policy import PolicyResult, Violation, check_policy
+from fixjury.verify.verdict import CheckOutcome, VerificationResult, assemble
+
+LOGGER = logging.getLogger(__name__)
+VENV = ".venv"
+VENV_BIN = f"/workspace/{VENV}/bin"
+PATH_WITH_VENV = f"{VENV_BIN}:/usr/local/bin:/usr/bin:/bin"
+PIP = f"{VENV_BIN}/pip"
+INSTALL_STEPS = (
+    ["python", "-m", "venv", VENV],
+    [PIP, "install", "--no-input", "--disable-pip-version-check", "-e", ".[dev]"],
+    [PIP, "install", "--no-input", "--disable-pip-version-check", "-e", "."],
+)
+TOOL_VERSION_COMMANDS = (
+    ("python", ["python", "--version"]),
+    ("pytest", ["pytest", "--version"]),
+    ("ruff", ["ruff", "--version"]),
+    ("mypy", ["mypy", "--version"]),
+)
+
+
+class VerificationError(RuntimeError):
+    """The verification environment could not be built."""
+
+
+def apply_patch(workspace: Path, diff: str) -> None:
+    """Apply the agent's diff to the pristine checkout, or say why not."""
+
+    git = shutil.which("git")
+    if git is None:
+        raise VerificationError("git is not installed")
+    completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        [git, "-C", str(workspace), "apply", "--binary", "--whitespace=nowarn", "-"],
+        input=diff,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        raise VerificationError(f"the diff does not apply: {detail}")
+
+
+def overlay_heldout(workspace: Path, bundle: Path) -> tuple[str, ...]:
+    """Copy the post-fix test files over the checkout and return their paths."""
+
+    spec = read_heldout(bundle)
+    source_root = bundle / HELDOUT_FILES_DIRNAME
+    for relative in spec.files:
+        source = source_root / relative
+        if not source.is_file():
+            raise VerificationError(f"held-out bundle is missing {relative}")
+        target = workspace / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+    return spec.files
+
+
+def check_argv(command: str) -> list[str]:
+    """Turn a task check into argv, keeping the whitelist from ``parse_check``."""
+
+    parsed = parse_check(command)
+    if parsed.tool is CheckTool.ruff:
+        return ["ruff", "check", *parsed.args]
+    return [parsed.tool.value, *parsed.args]
+
+
+async def _install(spec: SandboxSpec) -> None:
+    async with open_sandbox(spec) as sandbox:
+        for step in INSTALL_STEPS:
+            result = await exec_command(
+                sandbox,
+                step,
+                timeout_s=600.0,
+                workdir="/workspace",
+                env={"PATH": PATH_WITH_VENV},
+            )
+            if result.exit_code == 0:
+                continue
+            if step[-1] == ".[dev]":
+                # A project without a dev extra is not a broken project.
+                continue
+            raise VerificationError(f"{' '.join(step)} failed: {result.output.strip()[-600:]}")
+
+
+async def _run_checks(
+    spec: SandboxSpec,
+    document: TaskDocument,
+    workspace: Path,
+    heldout_bundle: Path | None,
+) -> tuple[tuple[CheckOutcome, ...], bool | None, dict[str, str]]:
+    outcomes: list[CheckOutcome] = []
+    heldout_pass: bool | None = None
+    versions: dict[str, str] = {}
+    async with open_sandbox(spec) as sandbox:
+        for name, argv in TOOL_VERSION_COMMANDS:
+            result = await exec_command(
+                sandbox, argv, timeout_s=60.0, workdir="/workspace", env={"PATH": PATH_WITH_VENV}
+            )
+            # A tool the task never runs may not be installed at all; recording
+            # its error text as a version would poison tool_versions.
+            if result.exit_code == 0 and result.output.strip():
+                versions[name] = result.output.strip().splitlines()[0]
+        for command in document.checks:
+            result = await exec_command(
+                sandbox,
+                check_argv(command),
+                timeout_s=900.0,
+                workdir="/workspace",
+                env={"PATH": PATH_WITH_VENV},
+            )
+            outcomes.append(
+                CheckOutcome(
+                    command=command,
+                    tool=parse_check(command).tool,
+                    exit_code=result.exit_code,
+                    output=_tail(result),
+                )
+            )
+        if heldout_bundle is not None:
+            # The overlay lands after the task's own checks have run, so
+            # ``tests_pass`` measures the agent's tree and ``heldout_pass``
+            # measures the post-fix tests. Copying first would make the two the
+            # same measurement and hide a patch that broke the repository's
+            # tests while satisfying the held-out ones.
+            spec_heldout = read_heldout(heldout_bundle)
+            heldout_files = overlay_heldout(workspace, heldout_bundle)
+            result = await exec_command(
+                sandbox,
+                ["pytest", *heldout_files],
+                timeout_s=900.0,
+                workdir="/workspace",
+                env={"PATH": PATH_WITH_VENV},
+            )
+            heldout_pass = result.exit_code == 0
+            outcomes.append(
+                CheckOutcome(
+                    command=f"held-out: {spec_heldout.command}",
+                    tool=CheckTool.pytest,
+                    exit_code=result.exit_code,
+                    output=_tail(result),
+                    heldout=True,
+                )
+            )
+    return tuple(outcomes), heldout_pass, versions
+
+
+def _tail(result: ExecResult, limit: int = 2000) -> str:
+    text = result.output.strip()
+    return text[-limit:] if len(text) > limit else text
+
+
+async def verify_workspace(
+    document: TaskDocument,
+    diff: str,
+    *,
+    workspace: Path,
+    image: str,
+    heldout_bundle: Path | None = None,
+) -> VerificationResult:
+    """Verify one diff against one task. Raises ``VerificationError`` when the
+    environment cannot be built; a bad patch is a result, not an error."""
+
+    base_commit = document.base_commit
+    if not base_commit:
+        raise VerificationError(f"task {document.id} has no base_commit")
+
+    policy: PolicyResult = check_policy(
+        diff,
+        allowed_paths=document.allowed_paths,
+        forbidden=document.forbidden,
+    )
+
+    checkout_base(document.repo, base_commit, workspace)
+    try:
+        apply_patch(workspace, diff)
+    except VerificationError as exc:
+        return assemble(
+            (),
+            policy=policy,
+            heldout_pass=None,
+            tool_versions={},
+            extra_violations=(Violation(RejectionCode.BUILD_BREAK, str(exc)),),
+            note="the diff does not apply to the base commit",
+        )
+
+    prepared = SandboxSpec(image=image, workspace=workspace, network=True, timeout_s=1800)
+    await _install(prepared)
+
+    running = SandboxSpec(image=image, workspace=workspace, network=False, timeout_s=1800)
+    outcomes, heldout_pass, versions = await _run_checks(
+        running, document, workspace, heldout_bundle
+    )
+    return assemble(
+        outcomes,
+        policy=policy,
+        heldout_pass=heldout_pass,
+        tool_versions=versions,
+    )
+
+
+__all__ = [
+    "VerificationError",
+    "apply_patch",
+    "check_argv",
+    "overlay_heldout",
+    "verify_workspace",
+]
