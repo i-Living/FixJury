@@ -1,0 +1,18 @@
+id: T-030
+repo: https://github.com/pallets/click
+issue:
+  number: 3571
+  url: https://github.com/pallets/click/issues/3571
+title: '`click.progressbar` doesn''t show full completion when using `show_pos=True` combined with `update_min_steps`'
+acceptance:
+- 'The behaviour reported in issue #3571 (`click.progressbar` doesn''t show full completion when using
+  `show_pos=True` combined with `update_min_steps`) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_termui.py
+allowed_paths:
+- src/click/_termui_impl.py
+- tests/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-030
+cutoff_assumption: clean

@@ -1,0 +1,142 @@
+id: T-029
+repo: https://github.com/pallets/click
+license: BSD-3-Clause
+base_commit: 9c4dfdaebe0e6b2aabc566eb81f6f10eb5cd6ea1
+fix_commit: 8b44edfff7d9a6c895fa804148c16b3a0bc9efb5
+issue:
+  number: 3731
+  url: https://github.com/pallets/click/issues/3731
+  created_at: 2026-07-28
+  fix_merged_at: 2026-08-14
+  body: |
+    On Windows, `click.echo_via_pager()` fails with a `PermissionError: [WinError 32]` naming a temp file. The reported error is cleanup noise masking the real one: a `TypeError` from writing `str` into a binary-mode temp file.
+
+    Regression introduced in 8.4.0 by the `get_pager_file` / `_pager_contextmanager` rewrite. Reproduced on 8.4.0, 8.4.1, 8.4.2, and the code shape is unchanged on `main`.
+
+    Windows-only. `_pipepager`'s `Popen(..., text=True).stdin` is a `TextIOWrapper` with a real `.buffer`, so POSIX takes a different path and is unaffected.
+
+    ### Cause
+
+    `_tempfilepager` yields a `NamedTemporaryFile(mode="wb")` to the caller:
+
+    ```python
+    f = tempfile.NamedTemporaryFile(mode="wb", delete=False)
+    try:
+        yield t.cast(t.BinaryIO, f), encoding, color
+    ```
+
+    `get_pager_file` then decides whether to wrap it for text writes:
+
+    ```python
+    if _has_binary_buffer(stream):
+        wrapper = MaybeStripAnsi(stream.buffer, color=color, encoding=encoding)
+        stream = wrapper
+    ```
+
+    `_has_binary_buffer` is `getattr(stream, "buffer", None) is not None`. A `NamedTemporaryFile` returns a `_TemporaryFileWrapper`, which has **no** `.buffer` attribute, so the check is False and the text wrapper is never installed. `echo_via_pager` then writes `str` directly to a binary handle:
+
+    ```
+    TypeError: a bytes-like object is required, not 'str'
+    ```
+
+    That exception unwinds into `_tempfilepager`'s cleanup:
+
+    ```python
+    finally:
+        os.unlink(f.name)
+    ```
+
+    The handle is still open in the same process, and Windows will not unlink an open file, so `PermissionError` replaces the `TypeError` and becomes the only thing the user sees. Anyone hitting this will reasonably suspect antivirus or file locking rather than a type error.
+
+    Side effect of the same masking: when the paging path *does* succeed the file is closed first, so the `finally` is only reachable in a broken state.
+
+    ### Reproduction
+
+    Needs a tty on stdin/stdout to reach `_tempfilepager`, so this forces the branch to stay runnable under captured stdio:
+
+    ```python
+    import click
+    from click import _termui_impl as ti
+
+    ti.isatty = lambda stream: True
+    ti.WIN = True
+
+    click.echo_via_pager(f"line {i}\n" for i in range(50))
+    ```
+
+    ```
+      File "click/termui.py", line 346, in echo_via_pager
+        with get_pager_file(color=color) as pager:
+      File "click/_termui_impl.py", line 633, in _tempfilepager
+        os.unlink(f.name)
+    PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\...\Temp\tmpsswp_chu'
+    ```
+
+    On a real Windows terminal, no monkeypatching needed — any output taller than the window reproduces it. Surfacing the masked error:
+
+    ```python
+    from click import _termui_impl as ti
+    gen = ti._tempfilepager(["cat"], color=False)
+    f, enc, color = gen.__enter__()
+    f.write("line\n")   # TypeError: a bytes-like object is required, not 'str'
+    ```
+
+    ### Downstream impact
+
+    Found via [mycli](https://github.com/dbcli/mycli) 2.7.0, which pins `click~=8.4.2` and calls `echo_via_pager` whenever query output exceeds the terminal. Any `SHOW TABLES` on a database with more tables than terminal rows dies with WinError 32. Pinning `click==8.3.3` is a clean workaround, since the pre-8.4 `_tempfilepager` buffered and encoded internally rather than yielding the handle.
+
+    ### Suggested fix
+
+    Wrap the temp file so it both accepts `str` and satisfies the `.buffer` check, and close before unlinking:
+
+    ```diff
+    -    f = tempfile.NamedTemporaryFile(mode="wb", delete=False)
+    +    raw = tempfile.NamedTemporaryFile(mode="wb", delete=False)
+    +    filename = raw.name
+    +    f = io.TextIOWrapper(raw, encoding=encoding)
+         try:
+    -        yield t.cast(t.BinaryIO, f), encoding, color
+    -        f.flush()
+    -        f.close()
+    -        subprocess.call([str(cmd_path), f.name])
+    +        yield f, encoding, color
+    +        f.flush()
+    +        f.close()
+    +        subprocess.call([str(cmd_path), filename])
+         finally:
+    -        os.unlink(f.name)
+    +        if not f.closed:
+    +            f.close()
+    +        os.unlink(filename)
+    ```
+
+    Capturing `filename` up front matters because `f.name` is not reachable through the wrapper the same way. Guarding `f.close()` in the `finally` is what stops a mid-write exception from turning into WinError 32 and hiding itself.
+
+    Verified locally: `str` writes are accepted, the pager subprocess receives the content, and the unlink succeeds.
+
+    Two alternatives if you'd rather not change the yielded type:
+
+    - Have `_has_binary_buffer` also accept objects exposing a `file` attribute (`_TemporaryFileWrapper.file`), keeping the yield binary.
+    - Use `tempfile.mkstemp()` + `open(filename, "w", encoding=...)`, which sidesteps the wrapper class entirely.
+
+    ### Environment
+
+    - Windows 11, Python 3.11
+    - click 8.4.0 / 8.4.1 / 8.4.2 all affected; 8.3.3 not affected
+    - `PAGER` unset and set to `less` both reproduce; `less` present on PATH
+title: echo_via_pager on Windows fails with WinError 32, masking a TypeError from writing str to a binary
+  temp file (8.4.0 regression)
+acceptance:
+- 'The behaviour reported in issue #3731 (echo_via_pager on Windows fails with WinError 32, masking a
+  TypeError from writing str to a binary temp file (8.4.0 regression)) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_termui.py
+allowed_paths:
+- src/click/_termui_impl.py
+- tests/
+difficulty: hard
+heldout_ref: benchmarks/heldout/T-029
+cutoff_assumption: clean
+frozen_at: 2026-11-12T16:31:26+00:00
+frozen_by: owner
