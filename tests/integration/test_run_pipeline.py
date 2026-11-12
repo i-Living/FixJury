@@ -100,7 +100,7 @@ def test_a_finished_run_is_persisted_with_its_diff(monkeypatch: pytest.MonkeyPat
             assert stored.tokens_in == 11
             assert stored.tokens_out == 7
             assert stored.sandbox_seconds == Decimal("1.50")
-            assert stored.pricing_version == "unpriced"
+            assert stored.pricing_version.startswith("unpriced")
             assert stored.cost_list_usd == Decimal("0")
             assert len(stored.config_hash) == 64
             assert stored.started_at is not None

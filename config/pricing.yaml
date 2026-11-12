@@ -1,0 +1,12 @@
+# List prices used to compute `runs.cost_list_usd` (PLAN §3.2.1).
+#
+# Every rate is zero on purpose: FixJury runs on a flat subscription, so there is
+# no per-run invoice, and inventing a rate would put a made-up number in a column
+# that looks authoritative. Fill these in from a provider price list before
+# publishing any cost figure, and bump `version` when you do — rows computed with
+# different versions are not comparable and the report must label the basis.
+version: unpriced-2026-11
+currency: USD
+models: {}
+sandbox:
+  per_hour: 0
