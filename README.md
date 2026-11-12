@@ -4,7 +4,7 @@
 
 > A patch that compiles, passes CI and opens a pull request is not a fix. FixJury measures how often a fix survives independent verification and human acceptance — and what one accepted fix actually costs.
 
-**Status: phase 4 of 7 — in progress.** Toolchain, schema, CI, the corpus tooling (`fixjury tasks validate|freeze|draft`) and a **32-task frozen corpus**. A run executes end to end (`fixjury run`, or queued through `fixjury queue add` + `fixjury worker`), is verified in a fresh container (`fixjury verify --run <id>`), and carries list-price cost and an OTel trace id. Third-party adapters, blind review and the metrics report are still ahead. See [`docs/PLAN.md`](docs/PLAN.md).
+**Status: phases 0–4 and 7.1–7.2 done.** Toolchain, schema, CI, the corpus tooling (`fixjury tasks validate|freeze|draft`) and a **32-task frozen corpus**. A run executes end to end (`fixjury run`, or queued through `fixjury queue add` + `fixjury worker`), is verified in a fresh container (`fixjury verify --run <id>`), carries list-price cost and an OTel trace id, and the metrics snapshot plus report render from those rows (`fixjury metrics compute`, `fixjury report`). Third-party adapters, the benchmark run, blind acceptance and the static page are still ahead. See [`docs/PLAN.md`](docs/PLAN.md).
 
 ---
 
@@ -145,7 +145,7 @@ AGENTS.md        engineering rules for agents working in this repo
 | 4 | 5 | Redis queue, worker, cost, traces — adapters next |
 | 5 | 6 | Benchmark run (90 runs) |
 | 6 | 7 | Blind human acceptance + repeat pass |
-| 7 | 8 | Metrics, engineering report, static metrics page on the VPS |
+| 7 | 8 | Metrics + report (done), static metrics page on the VPS (next) |
 
 Estimates are planning targets for evenings, not commitments.
 

@@ -36,7 +36,8 @@ def test_attributes_land_on_the_span() -> None:
     configure(console=False)
 
     with span("step", {"fixjury.tool": "exec", "fixjury.step": 3}) as current:
-        attributes = dict(current.attributes or {})
+        # The SDK span exposes its attributes; the API type does not.
+        attributes = dict(current.attributes or {})  # type: ignore[attr-defined]
 
     assert attributes["fixjury.tool"] == "exec"
     assert attributes["fixjury.step"] == 3
