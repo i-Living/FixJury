@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     sandbox_memory_mb: int = 2048
     sandbox_timeout_s: int = 1200
 
+    github_api_url: str = "https://api.github.com"
+    github_token: str = ""
+
     pricing_file: str = "config/pricing.yaml"
 
 
