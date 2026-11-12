@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>FixJury — {{ document.id }} patch</title>
+  <style>
+    body { font: 15px/1.55 -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; background: #f6f6f4; color: #1d1d1b; }
+    main { max-width: 68rem; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+    h1 { font-size: 1.35rem; margin: 0 0 .25rem; }
+    h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .05em; color: #6b6b66; margin: 1.75rem 0 .5rem; }
+    .meta { color: #6b6b66; margin-bottom: 1rem; }
+    .card { background: #fff; border: 1px solid #e6e6e2; padding: 1rem 1.1rem; }
+    pre { overflow-x: auto; background: #fff; border: 1px solid #e6e6e2; padding: .9rem 1rem; font-size: 12.5px; line-height: 1.45; }
+    ul { margin: .25rem 0 .75rem; padding-left: 1.1rem; }
+    .checks { display: flex; gap: .5rem; flex-wrap: wrap; }
+    .check { padding: .2rem .55rem; border-radius: 999px; font-size: .8rem; border: 1px solid #d8d8d2; }
+    .pass { background: #e7f4e9; border-color: #b6dcc0; }
+    .fail { background: #fbe9e7; border-color: #efc2bc; }
+    .null { color: #6b6b66; }
+    form { background: #fff; border: 1px solid #e6e6e2; padding: 1rem 1.1rem; }
+    label { display: block; margin: .35rem 0; }
+    .row { display: flex; gap: 1.5rem; align-items: center; margin-top: .75rem; }
+    button { font: inherit; padding: .5rem 1rem; border: 1px solid #1d1d1b; background: #1d1d1b; color: #fff; cursor: pointer; }
+    button.secondary { background: #fff; color: #1d1d1b; }
+    code { background: #f0f0ec; padding: .05rem .3rem; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>{{ document.title }}</h1>
+  <p class="meta">
+    Task {{ document.id }} · patch {{ item.position + 1 }} of the batch · {{ remaining }} left to review
+  </p>
+
+  <h2>Reported issue</h2>
+  <div class="card">{{ document.issue.body }}</div>
+
+  <h2>Acceptance criteria</h2>
+  <ul>{% for item_text in document.acceptance %}<li>{{ item_text }}</li>{% endfor %}</ul>
+
+  <h2>Checks</h2>
+  <div class="checks">
+    {% for name, value in item.checks.items() %}
+      {% if value is none %}<span class="check null">{{ name }}: n/a</span>
+      {% elif value %}<span class="check pass">{{ name }}: pass</span>
+      {% else %}<span class="check fail">{{ name }}: fail</span>{% endif %}
+    {% endfor %}
+  </div>
+
+  <h2>Patch</h2>
+  <pre>{{ item.patch }}</pre>
+
+  <h2>Rubric</h2>
+  <div class="card">
+    <strong>Accept when</strong>
+    <ul>{% for line in rubric["accept when"] %}<li>{{ line }}</li>{% endfor %}</ul>
+    <strong>Reject when</strong>
+    <ul>{% for line in rubric["reject when"] %}<li>{{ line }}</li>{% endfor %}</ul>
+  </div>
+
+  <h2>Your verdict</h2>
+  <form method="post" action="/batch/{{ batch_id }}/verdict">
+    <input type="hidden" name="run_id" value="{{ item.run_id }}">
+    <input type="hidden" name="reviewer" value="owner">
+    <label><input type="radio" name="verdict" value="accept" required> Accept — this fixes the reported behaviour</label>
+    <label><input type="radio" name="verdict" value="reject"> Reject — with at least one reason below</label>
+
+    <h2>Reasons</h2>
+    {% for reason in reasons %}
+      <label><input type="checkbox" name="reasons" value="{{ reason }}"> <code>{{ reason }}</code></label>
+    {% endfor %}
+
+    <div class="row">
+      <label>Seconds spent <input type="number" name="seconds" min="0" value="0" style="width:6rem"></label>
+      <button type="submit">Record verdict</button>
+    </div>
+  </form>
+</main>
+</body>
+</html>

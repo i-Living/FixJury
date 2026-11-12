@@ -4,7 +4,7 @@
 
 > A patch that compiles, passes CI and opens a pull request is not a fix. FixJury measures how often a fix survives independent verification and human acceptance — and what one accepted fix actually costs.
 
-**Status: phases 0–4 and 7.1–7.2 done.** Toolchain, schema, CI, the corpus tooling (`fixjury tasks validate|freeze|draft`) and a **32-task frozen corpus**. A run executes end to end (`fixjury run`, or queued through `fixjury queue add` + `fixjury worker`), is verified in a fresh container (`fixjury verify --run <id>`), carries list-price cost and an OTel trace id, and the metrics snapshot plus report render from those rows (`fixjury metrics compute`, `fixjury report`). Third-party adapters, the benchmark run, blind acceptance and the static page are still ahead. See [`docs/PLAN.md`](docs/PLAN.md).
+**Status: all phases implemented; the benchmark run and human acceptance are next.** Toolchain, schema, CI, the corpus tooling and a **32-task frozen corpus**. A run executes end to end (`fixjury run`, or the whole grid with `fixjury bench`), is verified in a fresh container (`fixjury verify`), carries list-price cost and an OTel trace id, and accepted patches are packed into blind batches for review (`fixjury review pack|serve`) before metrics and the report (`fixjury metrics compute`, `fixjury report`). What is missing is not code: it is two pinned harness images, a provider key, and 90 human verdicts. See [`docs/PLAN.md`](docs/PLAN.md).
 
 ---
 
@@ -143,8 +143,8 @@ AGENTS.md        engineering rules for agents working in this repo
 | 2 | 3 | Sandbox, diff capture, baseline agent, `fixjury run` |
 | 3 | 4 | Verification, held-out suite, policy checks, `fixjury verify` |
 | 4 | 5 | Redis queue, worker, cost, traces — adapters next |
-| 5 | 6 | Benchmark run (90 runs) |
-| 6 | 7 | Blind human acceptance + repeat pass |
+| 5 | 6 | Bench runner (`fixjury bench`) — the 90-run pass needs harness images and a key |
+| 6 | 7 | Blind review page (`fixjury review`) — the verdicts are the owner's |
 | 7 | 8 | Metrics + report (done), static metrics page on the VPS (next) |
 
 Estimates are planning targets for evenings, not commitments.

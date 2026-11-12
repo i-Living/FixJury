@@ -6,13 +6,17 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+import uvicorn
 
 from fixjury import __version__, queue
 from fixjury.agents.registry import UnknownAgentError, build_adapter
+from fixjury.bench import BenchError, BenchSummary, drain, enqueue_plan, load_plan
 from fixjury.db import make_engine, make_session_maker, session_scope
 from fixjury.metrics.service import MetricsError, compute_snapshot, latest_snapshots
-from fixjury.models import CostBasis, MetricSnapshot, Run, RunStatus, Verdict
+from fixjury.models import CostBasis, MetricSnapshot, ReviewBatch, Run, RunStatus, Verdict
 from fixjury.report.markdown import render_agent_table, render_report
+from fixjury.review.app import create_app
+from fixjury.review.pack import pack_batches
 from fixjury.run import RunError, ensure_task, run_task
 from fixjury.tasks.cli import app as tasks_app
 from fixjury.tasks.loader import read_task, task_path
@@ -331,3 +335,123 @@ def report(
         encoding="utf-8",
     )
     typer.echo(f"wrote {target} from {len(snapshots)} snapshot(s)")
+
+
+@app.command()
+def bench(
+    agents: Annotated[str, typer.Option("--agents", help="Comma-separated adapter names.")],
+    tasks: Annotated[
+        str, typer.Option("--tasks", help="Comma-separated task ids; default: the corpus index.")
+    ] = "",
+    corpus: Annotated[Path, typer.Option("--corpus", help="Corpus root.")] = Path("benchmarks"),
+    attempt: Annotated[int, typer.Option("--attempt", min=1, help="Attempt number.")] = 1,
+    max_seconds: Annotated[
+        float | None, typer.Option("--max-seconds", help="Stop when the budget is spent.")
+    ] = None,
+    verify: Annotated[
+        bool, typer.Option("--verify", help="Verify every finished run as it lands.")
+    ] = False,
+    image: Annotated[str | None, typer.Option("--image", help="Sandbox image override.")] = None,
+) -> None:
+    """Queue a task x agent grid, run it, and report what happened."""
+
+    selected_agents = tuple(item.strip() for item in agents.split(",") if item.strip())
+    selected_tasks = tuple(item.strip() for item in tasks.split(",") if item.strip())
+    try:
+        plan = load_plan(
+            corpus_root=corpus, agents=selected_agents, tasks=selected_tasks, attempt=attempt
+        )
+        for name in plan.agents:
+            build_adapter(name)
+    except (BenchError, UnknownAgentError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+
+    async def go() -> BenchSummary:
+        engine = make_engine()
+        client = redis_client()
+        maker = make_session_maker(engine)
+        try:
+            recovered = await queue.resume(client)
+            if recovered:
+                typer.echo(f"requeued {recovered} orphaned run(s)")
+            async with session_scope(maker) as session:
+                queued = await enqueue_plan(session, client, plan=plan, corpus_root=corpus)
+            typer.echo(f"queued {len(queued)} run(s) for {plan.pairs} pair(s)")
+            return await drain(
+                maker,
+                client,
+                plan=plan,
+                corpus_root=corpus,
+                image=image,
+                max_seconds=max_seconds,
+                verify=verify,
+            )
+        finally:
+            await client.aclose()  # type: ignore[attr-defined]
+            await engine.dispose()
+
+    summary = asyncio.run(go())
+    typer.echo(
+        f"bench done in {summary.elapsed_s}s: finished={summary.finished} "
+        f"failed={summary.failed} verified={summary.verified} "
+        f"budget_stop={summary.stopped_on_budget} statuses={summary.statuses}"
+    )
+    if summary.failed:
+        raise typer.Exit(code=1)
+
+
+review_app = typer.Typer(no_args_is_help=True, add_completion=False)
+app.add_typer(review_app, name="review")
+
+
+@review_app.command("pack")
+def review_pack(
+    reviewer: Annotated[
+        str, typer.Option("--reviewer", help="Who reviews these batches.")
+    ] = "owner",
+    pass_no: Annotated[int, typer.Option("--pass", min=1, help="Review pass number.")] = 1,
+    seed: Annotated[int, typer.Option("--seed", help="Base seed for the stored order.")] = 0,
+    tasks: Annotated[str, typer.Option("--tasks", help="Comma-separated task ids.")] = "",
+    corpus: Annotated[Path, typer.Option("--corpus", help="Corpus root.")] = Path("benchmarks"),
+    min_runs: Annotated[int, typer.Option("--min-runs", min=2, help="Runs per batch.")] = 2,
+) -> None:
+    """Pack accepted patches into blind batches, one per task."""
+
+    selected = tuple(item.strip() for item in tasks.split(",") if item.strip()) or None
+
+    async def go() -> list[ReviewBatch]:
+        engine = make_engine()
+        try:
+            async with session_scope(make_session_maker(engine)) as session:
+                return await pack_batches(
+                    session,
+                    reviewer=reviewer,
+                    pass_no=pass_no,
+                    seed=seed,
+                    tasks=selected,
+                    min_runs=min_runs,
+                )
+        finally:
+            await engine.dispose()
+
+    batches = asyncio.run(go())
+    if not batches:
+        typer.echo("nothing to pack: no task has enough accepted patches")
+        raise typer.Exit(code=1)
+    for batch in batches:
+        typer.echo(f"batch {batch.id} task={batch.task_id} patches={len(batch.run_ids)}")
+
+
+@review_app.command("serve")
+def review_serve(
+    host: Annotated[str, typer.Option("--host", help="Bind address.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", help="Port.")] = 8099,
+    corpus: Annotated[Path, typer.Option("--corpus", help="Corpus root.")] = Path("benchmarks"),
+) -> None:
+    """Serve the blind review page."""
+
+    engine = make_engine()
+    application = create_app(maker=make_session_maker(engine), corpus_root=corpus)
+    typer.echo(f"review page on http://{host}:{port}")
+    uvicorn.run(application, host=host, port=port, log_level="warning")
