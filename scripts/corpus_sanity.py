@@ -128,16 +128,15 @@ def _test_dependency(project: Path) -> tuple[str, str] | None:
         data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError):
         return None
-    groups = data.get("dependency-groups")
-    if isinstance(groups, dict):
-        for name in ("test", "tests", "testing"):
-            if name in groups:
-                return ("group", name)
-    optional = data.get("project", {}).get("optional-dependencies")
-    if isinstance(optional, dict):
-        for name in ("test", "tests", "testing"):
-            if name in optional:
-                return ("extra", name)
+    for kind, section in (
+        ("group", data.get("dependency-groups")),
+        ("extra", data.get("project", {}).get("optional-dependencies")),
+    ):
+        if not isinstance(section, dict):
+            continue
+        for name in ("test", "tests", "testing", "dev"):
+            if name in section:
+                return (kind, name)
     return None
 
 
@@ -145,7 +144,7 @@ def create_environment(project: Path, venv: Path, tools: set[CheckTool]) -> tupl
     """Create a venv for one task and install the project with its tests."""
 
     code, output = _run(
-        [_tool("uv"), "venv", "--python", PYTHON_VERSION, str(venv)],
+        [_tool("uv"), "venv", "--clear", "--python", PYTHON_VERSION, str(venv)],
         cwd=project,
         timeout=INSTALL_TIMEOUT_S,
     )
