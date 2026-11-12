@@ -59,6 +59,57 @@ async def get_object(
     return {str(key): value for key, value in payload.items()}
 
 
+async def get_optional_object(
+    client: httpx.AsyncClient, url: str, *, token: str = "", params: dict[str, str] | None = None
+) -> JsonObject | None:
+    """GET a JSON object, returning ``None`` when GitHub answers 404."""
+
+    try:
+        response = await client.get(url, headers=_headers(token), params=params)
+    except httpx.HTTPError as exc:
+        raise GithubError(f"GET {url} failed: {exc}") from exc
+    if response.status_code == httpx.codes.NOT_FOUND:
+        return None
+    if response.status_code >= httpx.codes.BAD_REQUEST:
+        detail = response.text.strip().replace("\n", " ")[:200]
+        raise GithubError(f"GET {url} failed: {response.status_code} {detail}")
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise GithubError(f"GET {url} returned invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise GithubError(f"GET {url} returned {type(payload).__name__}, expected an object")
+    return {str(key): value for key, value in payload.items()}
+
+
+async def get_optional_array(
+    client: httpx.AsyncClient, url: str, *, token: str = "", params: dict[str, str] | None = None
+) -> list[JsonObject] | None:
+    """GET a JSON array, returning ``None`` when GitHub answers 404."""
+
+    try:
+        response = await client.get(url, headers=_headers(token), params=params)
+    except httpx.HTTPError as exc:
+        raise GithubError(f"GET {url} failed: {exc}") from exc
+    if response.status_code == httpx.codes.NOT_FOUND:
+        return None
+    if response.status_code >= httpx.codes.BAD_REQUEST:
+        detail = response.text.strip().replace("\n", " ")[:200]
+        raise GithubError(f"GET {url} failed: {response.status_code} {detail}")
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise GithubError(f"GET {url} returned invalid JSON") from exc
+    if not isinstance(payload, list):
+        raise GithubError(f"GET {url} returned {type(payload).__name__}, expected an array")
+    items: list[JsonObject] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            raise GithubError(f"GET {url} returned an array element that is not an object")
+        items.append({str(key): value for key, value in item.items()})
+    return items
+
+
 async def get_array(
     client: httpx.AsyncClient, url: str, *, token: str = "", params: dict[str, str] | None = None
 ) -> list[JsonObject]:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import datetime as dt
 
 import httpx
@@ -12,6 +13,7 @@ from fixjury.tasks.freeze import (
     FreezeFacts,
     collect_facts,
     default_frozen_by,
+    detect_license,
     freeze_document,
 )
 from fixjury.tasks.schema import TaskDocument
@@ -226,3 +228,125 @@ def test_freeze_document_requires_a_frozen_by() -> None:
 
 def test_default_frozen_by_is_not_empty() -> None:
     assert default_frozen_by().strip()
+
+
+MIT_TEXT = """MIT License
+
+Copyright (c) 2024 Someone
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software.
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+"""
+
+APACHE_TEXT = """                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+"""
+
+BSD_TEXT = """Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+"""
+
+
+def _contents(text: str) -> dict[str, object]:
+    return {"encoding": "base64", "content": base64.b64encode(text.encode()).decode()}
+
+
+def test_detect_license_reads_the_canonical_text() -> None:
+    assert detect_license(MIT_TEXT) == "MIT"
+    assert detect_license(APACHE_TEXT) == "Apache-2.0"
+    assert detect_license(BSD_TEXT) == "BSD-3-Clause"
+    assert detect_license("All rights reserved. Do not use.") is None
+
+
+def test_collect_facts_resolves_an_unasserted_license_from_the_licence_file() -> None:
+    routes = routes_for_success()
+    routes["/repos/pallets/click"] = {
+        "license": {"spdx_id": "NOASSERTION"},
+        "default_branch": "main",
+    }
+    routes["/repos/pallets/click/contents/LICENSE"] = _contents(MIT_TEXT)
+
+    facts = collect(routes, fix_pr=2800)
+
+    assert facts.license == "MIT"
+
+
+def test_collect_facts_falls_back_to_pyproject_when_no_licence_file_matches() -> None:
+    routes = routes_for_success()
+    routes["/repos/pallets/click"] = {"license": None, "default_branch": "main"}
+    routes["/repos/pallets/click/contents/pyproject.toml"] = _contents(
+        '[project]\nname = "click"\nlicense = "BSD-3-Clause"\n'
+    )
+
+    facts = collect(routes, fix_pr=2800)
+
+    assert facts.license == "BSD-3-Clause"
+
+
+def test_collect_facts_rejects_a_license_it_cannot_resolve() -> None:
+    routes = routes_for_success()
+    routes["/repos/pallets/click"] = {
+        "license": {"spdx_id": "NOASSERTION"},
+        "default_branch": "main",
+    }
+
+    with pytest.raises(FreezeError, match="license is unknown"):
+        collect(routes, fix_pr=2800)
+
+
+def test_collect_facts_reads_a_suffixed_licence_file() -> None:
+    routes = routes_for_success()
+    routes["/repos/pallets/click"] = {
+        "license": {"spdx_id": "NOASSERTION"},
+        "default_branch": "main",
+    }
+    routes["/repos/pallets/click/contents"] = [
+        {"name": "LICENSE-APACHE", "type": "file"},
+        {"name": "LICENSE-MIT", "type": "file"},
+        {"name": "src", "type": "dir"},
+    ]
+    routes["/repos/pallets/click/contents/LICENSE-APACHE"] = _contents(APACHE_TEXT)
+    routes["/repos/pallets/click/contents/LICENSE-MIT"] = _contents(MIT_TEXT)
+
+    facts = collect(routes, fix_pr=2800)
+
+    assert facts.license == "Apache-2.0"
+
+
+def test_collect_facts_accepts_a_dual_licence_expression() -> None:
+    routes = routes_for_success()
+    routes["/repos/pallets/click"] = {"license": None, "default_branch": "main"}
+    routes["/repos/pallets/click/contents"] = [{"name": "LICENSE", "type": "file"}]
+    routes["/repos/pallets/click/contents/LICENSE"] = _contents(
+        "See LICENSE.APACHE and LICENSE.BSD."
+    )
+    routes["/repos/pallets/click/contents/pyproject.toml"] = _contents(
+        '[project]\nname = "packaging"\nlicense = "Apache-2.0 OR BSD-2-Clause"\n'
+    )
+
+    facts = collect(routes, fix_pr=2800)
+
+    assert facts.license == "Apache-2.0"
+
+
+def test_collect_facts_does_not_override_a_known_non_permissive_license() -> None:
+    routes = routes_for_success()
+    routes["/repos/pallets/click"] = {
+        "license": {"spdx_id": "GPL-3.0"},
+        "default_branch": "main",
+    }
+    routes["/repos/pallets/click/contents/LICENSE"] = _contents(MIT_TEXT)
+
+    with pytest.raises(FreezeError, match=r"GPL-3\.0"):
+        collect(routes, fix_pr=2800)
