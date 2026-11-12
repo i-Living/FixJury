@@ -69,3 +69,34 @@ Prompts live in `src/fixjury/prompts/baseline_agent.md`; no prompt text in Pytho
 - `docker ps` has no container after the integration test, including after a timeout.
 - A mocked-model run produces a non-empty diff, a `diff_sha256`, and token counters.
 - No module in `src/fixjury/sandbox/` or `src/fixjury/agents/` writes to the database.
+
+## Checkpoint — landed
+
+All four steps are in, plus the run orchestration that turns them into a recorded run:
+
+| Piece | Where | Evidence |
+| --- | --- | --- |
+| Diff capture | `src/fixjury/sandbox/diff.py` | 9 unit tests: untracked file present, binary patch refused, digest changes with content |
+| Container | `src/fixjury/sandbox/container.py` | 5 integration tests: command runs, host sees the write, egress fails, container gone, run cap kills |
+| Tool API | `src/fixjury/sandbox/tools.py` | 18 unit tests: argv untouched, output capped, `../etc/passwd` refused |
+| Baseline agent | `src/fixjury/agents/` | 13 unit + 2 integration tests: scripted plan → diff, same plan → same digest |
+| Run orchestration | `src/fixjury/run.py`, `src/fixjury/db.py`, `fixjury run` | 12 unit + 4 integration tests against live Postgres, work rolled back |
+| Registry | `src/fixjury/agents/registry.py` | unknown agent names the ones it knows |
+
+Measured, not asserted:
+
+- `fixjury run --task T-001 --agent baseline` against a local scripted endpoint cloned
+  `Delgan/loguru` at `36da8cc`, ran the loop in a container and stored
+  `sha256=de79ff58…` with `tokens=400/80`, `sandbox_seconds=0.40`. A second run of the same plan
+  produced the same digest.
+- With no reachable model the same command stores an `infra_failed` row instead of raising:
+  `status=infra_failed tokens=0/0 diff=-`.
+- `runs` rows carry `config_hash` (task, base commit, agent, agent version, model, image, timeout,
+  max steps, pricing version) and `pricing_version="unpriced"`, so a later priced run cannot be
+  silently compared with these.
+- `sandbox_seconds` is the container's lifetime, not the loop's: the adapter measures around
+  `open_sandbox`, because that is what a run is billed for.
+
+Not done, and deliberately left to later phases: no verification (phase 3), no queue or retries
+(phase 4), no third-party adapters, and no live model run — this environment has no provider key,
+so the baseline is proven against a scripted endpoint and a scripted in-process model.
