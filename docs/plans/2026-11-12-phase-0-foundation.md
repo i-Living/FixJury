@@ -800,12 +800,14 @@ git commit -m "ci: run lint, types and tests on every push"
 ```yaml
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.6
+    rev: v0.17.4
     hooks:
       - id: ruff
         args: ["--fix"]
       - id: ruff-format
 ```
+
+Тег держим равным установленной версии ruff (`uv run ruff --version`); при обновлении — `uv run pre-commit autoupdate`.
 
 **Step 2: поставить и прогнать**
 
@@ -833,7 +835,7 @@ git commit -m "chore: add pre-commit hooks"
 - [ ] `docker compose ps` → postgres и redis `(healthy)`
 - [ ] `docker compose exec -T postgres psql -U fixjury -d fixjury -c '\dt'` → 7 таблиц
 - [ ] `uv run alembic downgrade base && uv run alembic upgrade head` → схема пересоздаётся без ошибок
-- [ ] `git status --short` → пусто; 8 коммитов (3 исходных + 5 задач)
+- [ ] `git status --short` → пусто; 10 коммитов (4 документа + 6 задач)
 
 ---
 
