@@ -12,8 +12,15 @@ from fixjury import __version__, queue
 from fixjury.agents.registry import UnknownAgentError, build_adapter
 from fixjury.bench import BenchError, BenchSummary, drain, enqueue_plan, load_plan
 from fixjury.db import make_engine, make_session_maker, session_scope
-from fixjury.metrics.service import MetricsError, compute_snapshot, latest_snapshots
+from fixjury.metrics.service import (
+    MetricsError,
+    compute_snapshot,
+    latest_snapshots,
+    snapshot_by_id,
+)
 from fixjury.models import CostBasis, MetricSnapshot, ReviewBatch, Run, RunStatus, Verdict
+from fixjury.report.charts import render_charts, render_regression_split
+from fixjury.report.dashboard import write_dashboard
 from fixjury.report.markdown import render_agent_table, render_report
 from fixjury.review.app import create_app
 from fixjury.review.pack import pack_batches
@@ -313,13 +320,24 @@ def report(
         "docs/report"
     ),
     basis: Annotated[str, typer.Option("--basis", help="Cost basis to label.")] = "list_price",
+    snapshot: Annotated[
+        str | None, typer.Option("--snapshot", help="Reproduce the report from one snapshot id.")
+    ] = None,
+    charts: Annotated[
+        bool, typer.Option("--charts", help="Also write the charts next to the report.")
+    ] = False,
 ) -> None:
-    """Render the markdown report from the latest snapshots."""
+    """Render the markdown report from the latest snapshots, or from one snapshot."""
 
     async def go() -> list[MetricSnapshot]:
         engine = make_engine()
         try:
             async with session_scope(make_session_maker(engine)) as session:
+                if snapshot is not None:
+                    found = await snapshot_by_id(session, uuid.UUID(snapshot))
+                    if found is None:
+                        raise SystemExit(f"no snapshot {snapshot}")
+                    return [found]
                 return await latest_snapshots(session, agent=None)
         finally:
             await engine.dispose()
@@ -334,6 +352,49 @@ def report(
         render_report([snapshot.payload for snapshot in snapshots], basis=basis),
         encoding="utf-8",
     )
+    snapshots.sort(key=lambda snapshot: snapshot.agent)
+    if charts:
+        payloads = [snapshot.payload for snapshot in snapshots]
+        drawn = render_charts(payloads, out)
+        drawn["regressions"] = render_regression_split(payloads, out)
+        typer.echo(f"charts: {', '.join(sorted(path.name for path in drawn.values()))}")
+    typer.echo(f"wrote {target} from {len(snapshots)} snapshot(s)")
+
+
+@app.command()
+def dashboard(
+    out: Annotated[Path, typer.Option("--out", help="Directory for the page.")] = Path(
+        "docs/dashboard"
+    ),
+    basis: Annotated[str, typer.Option("--basis", help="Cost basis to label.")] = "list_price",
+    snapshot: Annotated[
+        str | None, typer.Option("--snapshot", help="Build the page from one snapshot id.")
+    ] = None,
+) -> None:
+    """Build the static metrics page from the latest snapshots."""
+
+    async def go() -> list[MetricSnapshot]:
+        engine = make_engine()
+        try:
+            async with session_scope(make_session_maker(engine)) as session:
+                if snapshot is not None:
+                    found = await snapshot_by_id(session, uuid.UUID(snapshot))
+                    if found is None:
+                        raise SystemExit(f"no snapshot {snapshot}")
+                    return [found]
+                return await latest_snapshots(session, agent=None)
+        finally:
+            await engine.dispose()
+
+    snapshots = asyncio.run(go())
+    if not snapshots:
+        typer.echo("no snapshots yet: run `fixjury metrics compute` first", err=True)
+        raise typer.Exit(code=1)
+    snapshots.sort(key=lambda snapshot: snapshot.agent)
+    payloads = [snapshot.payload for snapshot in snapshots]
+    chart_paths = render_charts(payloads, out / "charts")
+    chart_paths["regressions"] = render_regression_split(payloads, out / "charts")
+    target = write_dashboard(payloads, out, basis=basis, charts=chart_paths)
     typer.echo(f"wrote {target} from {len(snapshots)} snapshot(s)")
 
 

@@ -101,6 +101,12 @@ async def compute_snapshot(
     return snapshot
 
 
+async def snapshot_by_id(session: AsyncSession, snapshot_id: uuid.UUID) -> MetricSnapshot | None:
+    """One stored snapshot, so a report can be reproduced exactly."""
+
+    return await session.get(MetricSnapshot, snapshot_id)
+
+
 async def latest_snapshots(
     session: AsyncSession, *, agent: str | None = None
 ) -> list[MetricSnapshot]:
