@@ -1,0 +1,18 @@
+id: T-014
+repo: https://github.com/more-itertools/more-itertools
+issue:
+  number: 1030
+  url: https://github.com/more-itertools/more-itertools/issues/1030
+title: interleave randomly
+acceptance:
+- 'The behaviour reported in issue #1030 (interleave randomly) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_more.py
+allowed_paths:
+- more_itertools/more.py
+- more_itertools/more.pyi
+- tests/
+difficulty: hard
+heldout_ref: benchmarks/heldout/T-014
+cutoff_assumption: clean

@@ -1,0 +1,35 @@
+id: T-022
+repo: https://github.com/asottile/pyupgrade
+license: MIT
+base_commit: 46c3d526905780be88d227f46e19f24f2593fbbe
+fix_commit: 3a1254b1d9ee85380bafa043d0a781be7b5f3c93
+issue:
+  number: 1042
+  url: https://github.com/asottile/pyupgrade/issues/1042
+  created_at: 2025-11-19
+  fix_merged_at: 2025-11-19
+  body: |-
+    pyupgrade fails on something like this:
+
+    ```python
+    from __future__ import annotations
+
+    a: (
+        'str | '
+        'int'
+    )
+    ```
+title: annotation unstringifier with implicit concat
+acceptance:
+- 'The behaviour reported in issue #1042 (annotation unstringifier with implicit concat) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/features/typing_pep563_test.py
+allowed_paths:
+- pyupgrade/_plugins/typing_pep563.py
+- tests/features/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-022
+cutoff_assumption: clean
+frozen_at: 2026-11-12T16:02:49+00:00
+frozen_by: owner

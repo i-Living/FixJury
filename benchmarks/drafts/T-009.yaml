@@ -1,0 +1,18 @@
+id: T-009
+repo: https://github.com/PyCQA/isort
+issue:
+  number: 2456
+  url: https://github.com/PyCQA/isort/issues/2456
+title: The plone profile is not compatible anymore with the recent black
+acceptance:
+- 'The behaviour reported in issue #2456 (The plone profile is not compatible anymore with the recent
+  black) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/unit/profiles/test_plone.py
+allowed_paths:
+- isort/profiles.py
+- tests/unit/profiles/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-009
+cutoff_assumption: clean

@@ -1,0 +1,18 @@
+id: T-016
+repo: https://github.com/more-itertools/more-itertools
+issue:
+  number: 1041
+  url: https://github.com/more-itertools/more-itertools/issues/1041
+title: Add `running_mean`?
+acceptance:
+- 'The behaviour reported in issue #1041 (Add `running_mean`?) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_recipes.py
+allowed_paths:
+- more_itertools/recipes.py
+- more_itertools/recipes.pyi
+- tests/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-016
+cutoff_assumption: clean

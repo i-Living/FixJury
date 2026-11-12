@@ -1,0 +1,31 @@
+{
+  "task_id": "T-021",
+  "checked_at": "2026-11-12T15:49:49Z",
+  "python_version": "Python 3.12.14",
+  "tool_versions": {
+    "pytest": "pytest 9.2.0"
+  },
+  "repo": "https://github.com/Textualize/rich",
+  "base_commit": "58ac15120fe254886c10d6253667733c83604cb4",
+  "fix_commit": "19c67b9a3479841e9133bea94607c89ee931d3fc",
+  "checks": [
+    "pytest tests/test_file_proxy.py"
+  ],
+  "heldout_command": "pytest tests/test_file_proxy.py",
+  "base_checks": {
+    "exit_code": 0,
+    "summary": "3 passed in 0.12s"
+  },
+  "base_heldout": {
+    "exit_code": 1,
+    "summary": "1 failed, 3 passed in 0.07s"
+  },
+  "fix_checks": {
+    "exit_code": 0,
+    "summary": "4 passed in 0.14s"
+  },
+  "fix_heldout": {
+    "exit_code": 0,
+    "summary": "4 passed in 0.05s"
+  }
+}

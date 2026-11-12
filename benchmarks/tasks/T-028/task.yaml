@@ -1,0 +1,35 @@
+id: T-028
+repo: https://github.com/marshmallow-code/marshmallow
+license: MIT
+base_commit: 070dde08bad456e743a0d2e1842c142a799a9568
+fix_commit: 65374df0c31cdc45acc4435741779298201306a2
+issue:
+  number: 2869
+  url: https://github.com/marshmallow-code/marshmallow/issues/2869
+  created_at: 2025-11-26
+  fix_merged_at: 2026-03-25
+  body: "`marshmallow.validate.OneOf.options()` is supposed to “return the (value, label) pairs, where\
+    \ value is a string associated with each choice.” However the implementation zips `choices` and `labels`\
+    \ with `zip_longest(..., fillvalue=\"\")`, so it produces as many pairs as the longer input. When\
+    \ `labels` is longer than `choices`, `options()` yields phantom entries whose value is the empty string,\
+    \ even though no such choice exists. \nBetter to raise a ValueErorr?\n\n\n```python\nfrom marshmallow.validate\
+    \ import OneOf\n\noneof = OneOf(choices=[], labels=[\"extra\"])\nprint(list(oneof.options()))\n# Expected:\
+    \ []\n# Actual: [('', 'extra')]  # bogus option with empty string value\n```\n\n> Note: This issue\
+    \ was identified by an automated testing tool for academic research and manually verified. If you\
+    \ have any concerns about this type of reporting, please let me know, and I will adjust my workflow\
+    \ accordingly."
+title: '`OneOf.options()` emits extra pairs when labels outnumber choices'
+acceptance:
+- 'The behaviour reported in issue #2869 (`OneOf.options()` emits extra pairs when labels outnumber choices)
+  no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_validate.py
+allowed_paths:
+- src/marshmallow/validate.py
+- tests/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-028
+cutoff_assumption: clean
+frozen_at: 2026-11-12T16:03:08+00:00
+frozen_by: owner

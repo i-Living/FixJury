@@ -1,0 +1,145 @@
+id: T-006
+repo: https://github.com/Delgan/loguru
+license: MIT
+base_commit: 5672e7d0ad610d70c5e549939b049303edefda19
+fix_commit: d3c590573edb41884feb206823a47c3a9e14aa68
+issue:
+  number: 1502
+  url: https://github.com/Delgan/loguru/issues/1502
+  created_at: 2026-08-28
+  fix_merged_at: 2026-08-29
+  body: |
+    ## Summary
+
+    Duration strings passed to `rotation` and `retention` are parsed by `parse_duration()`.
+
+    The numeric token accepted by the parser allows scientific notation, so values such as `1e6s` are parsed successfully. However, values that can be converted by `float()` but exceed the representable range of `datetime.timedelta` cause an `OverflowError` to escape from `parse_duration()`.
+
+    As a result, `logger.add()` exposes an implementation-level `OverflowError` instead of reporting the duration as an invalid or out-of-range configuration value.
+
+    For example:
+
+    * `1e6s` works as expected (~11.6 days).
+    * `1e14s` raises `OverflowError` because the resulting duration exceeds the maximum magnitude supported by `datetime.timedelta`.
+    * `1e20s` also raises `OverflowError`.
+    * `1e309s` is converted to `inf` by `float()` and eventually raises `OverflowError`.
+
+    Normal duration values such as `1 week` are unaffected.
+
+    ## Reproduction
+
+    ```python
+    from loguru import logger
+
+    logger.remove()
+
+    logger.add("app.log", rotation="1 week", delay=True)   # OK
+    logger.remove()
+
+    logger.add("app.log", rotation="1e6s", delay=True)    # OK
+    logger.remove()
+
+    logger.add("app.log", rotation="1e14s", delay=True)   # OverflowError
+    ```
+
+    The same issue also affects `retention`:
+
+    ```python
+    logger.remove()
+    logger.add("app.log", retention="1e14s", delay=True)
+    ```
+
+    ## Actual behavior
+
+    For `rotation="1e14s"`:
+
+    ```text
+    Traceback (most recent call last):
+      ...
+      File "loguru/_string_parsers.py", line ..., in parse_duration
+        return datetime.timedelta(seconds=seconds)
+    OverflowError: days=1157407407; must have magnitude <= 999999999
+    ```
+
+    Larger values can expose other `OverflowError` variants depending on the input and Python version, for example:
+
+    ```text
+    OverflowError: Python int too large to convert to C int
+    ```
+
+    or, for a value converted to infinity:
+
+    ```text
+    OverflowError: cannot convert float infinity to integer
+    ```
+
+    ## Expected behavior
+
+    A duration that is syntactically accepted but cannot be represented as a `datetime.timedelta` should be reported as an invalid/out-of-range duration, preferably through `ValueError`, rather than leaking `OverflowError` from `datetime.timedelta`.
+
+    This would also make the behavior more consistent with the other parsing/configuration errors raised for invalid `rotation` and `retention` values.
+
+    ## Relevant code
+
+    `parse_duration()` currently follows this path:
+
+    ```python
+    reg = r"(?:([e\+\-\.\d]+)\s*([a-z]+)[\s\,]*)"
+
+    if not re.fullmatch(reg + "+", duration, flags=re.I):
+        return None
+
+    ...
+
+    value = float(value)
+
+    ...
+
+    seconds += value * unit
+
+    return datetime.timedelta(seconds=seconds)
+    ```
+
+    Therefore, a value may successfully pass the duration syntax check, `float()` conversion, and unit lookup, but still fail when constructing the final `datetime.timedelta`.
+
+    The callers for string-based `rotation` / `retention` use this parser directly, so the resulting `OverflowError` reaches `logger.add()`.
+
+    ## Possible fix
+
+    One option would be to normalize non-finite or out-of-range duration values to `ValueError`, for example:
+
+    ```python
+    import math
+
+    if not math.isfinite(seconds):
+        raise ValueError("Invalid duration value: '%s'" % duration)
+
+    try:
+        return datetime.timedelta(seconds=seconds)
+    except OverflowError as error:
+        raise ValueError("Duration out of range: '%s'" % duration) from error
+    ```
+
+    The exact error message is of course up to the project; the main point is to avoid exposing the underlying `OverflowError` for a duration value accepted by the parser.
+
+    ## Environment
+
+    Reproduced with:
+    * Loguru commit `54c89d609fc98a63b5bf7f801119c5bc526e2016`
+    * CPython 3.11.2
+    * Linux x86_64
+title: Out-of-range duration strings for `rotation` / `retention` leak `OverflowError` from `datetime.timedelta`
+acceptance:
+- 'The behaviour reported in issue #1502 (Out-of-range duration strings for `rotation` / `retention` leak
+  `OverflowError` from `datetime.timedelta`) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_filesink_retention.py tests/test_filesink_rotation.py
+allowed_paths:
+- loguru/_string_parsers.py
+- tests/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-006
+cutoff_assumption: clean
+frozen_at: 2026-11-12T16:00:25+00:00
+frozen_by: owner

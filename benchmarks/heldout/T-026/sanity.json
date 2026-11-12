@@ -1,0 +1,31 @@
+{
+  "task_id": "T-026",
+  "checked_at": "2026-11-12T15:51:22Z",
+  "python_version": "Python 3.12.14",
+  "tool_versions": {
+    "pytest": "pytest 9.2.0"
+  },
+  "repo": "https://github.com/marshmallow-code/marshmallow",
+  "base_commit": "546be2f728faca68a88130a6406c20994355c853",
+  "fix_commit": "fea5428567960f15be0c9a3a4b99c0d9bb63848c",
+  "checks": [
+    "pytest tests/test_fields.py tests/test_serialization.py"
+  ],
+  "heldout_command": "pytest tests/test_fields.py tests/test_serialization.py",
+  "base_checks": {
+    "exit_code": 0,
+    "summary": "220 passed in 0.69s"
+  },
+  "base_heldout": {
+    "exit_code": 1,
+    "summary": "2 failed, 222 passed in 0.79s"
+  },
+  "fix_checks": {
+    "exit_code": 0,
+    "summary": "224 passed in 0.68s"
+  },
+  "fix_heldout": {
+    "exit_code": 0,
+    "summary": "224 passed in 0.32s"
+  }
+}

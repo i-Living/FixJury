@@ -1,0 +1,3 @@
+command: pytest tests/unit/profiles/test_plone.py
+files:
+  - tests/unit/profiles/test_plone.py

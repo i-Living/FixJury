@@ -1,0 +1,31 @@
+{
+  "task_id": "T-002",
+  "checked_at": "2026-11-12T15:42:46Z",
+  "python_version": "Python 3.12.14",
+  "tool_versions": {
+    "pytest": "pytest 8.4.1"
+  },
+  "repo": "https://github.com/Delgan/loguru",
+  "base_commit": "764cd30d4b285ca01718ab3162a9f1a022bc49c6",
+  "fix_commit": "e49d1539042e18ca17b96fd28727234a0705d22a",
+  "checks": [
+    "pytest tests/test_datetime.py"
+  ],
+  "heldout_command": "pytest tests/test_datetime.py",
+  "base_checks": {
+    "exit_code": 0,
+    "summary": "47 passed in 0.76s"
+  },
+  "base_heldout": {
+    "exit_code": 1,
+    "summary": "2 failed, 47 passed in 0.77s"
+  },
+  "fix_checks": {
+    "exit_code": 0,
+    "summary": "49 passed in 0.76s"
+  },
+  "fix_heldout": {
+    "exit_code": 0,
+    "summary": "49 passed in 0.55s"
+  }
+}

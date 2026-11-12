@@ -1,0 +1,35 @@
+id: T-010
+repo: https://github.com/PyCQA/isort
+license: MIT
+base_commit: 967d206ffc96a6be5a1723d29e55ca64ee44b1f1
+fix_commit: 0351f0e7df994df92433483aa7914fbe5f974c27
+issue:
+  number: 2532
+  url: https://github.com/PyCQA/isort/issues/2532
+  created_at: 2026-05-07
+  fix_merged_at: 2026-05-12
+  body: |-
+    Passing `lazy=True` to `git_hook` causes isort to [_discover_ unstaged files](https://github.com/PyCQA/isort/blob/ab9cd3601d92d59416a57f457dcabb27ff622dd3/isort/hooks.py#L63-L64), but then AFAICS it still only [checks the staged file content](https://github.com/PyCQA/isort/blob/ab9cd3601d92d59416a57f457dcabb27ff622dd3/isort/hooks.py#L84-L86).
+
+    This fits with my observed behaviour that running the following in my `pre-commit` hook:
+    ```
+    python -c "import sys; from isort.hooks import git_hook; sys.exit(git_hook(strict=True, modify=True, lazy=True))"
+    ```
+    does not flag (or fix) isort errors in files that are modified but not staged.
+
+    AFAICS this has been broken since it was [added](https://github.com/PyCQA/isort/pull/1345) but perhaps I've missed something?
+title: git_hook(lazy=True) not checking unstaged changes
+acceptance:
+- 'The behaviour reported in issue #2532 (git_hook(lazy=True) not checking unstaged changes) no longer
+  reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/unit/test_hooks.py
+allowed_paths:
+- isort/hooks.py
+- tests/unit/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-010
+cutoff_assumption: clean
+frozen_at: 2026-11-12T16:00:40+00:00
+frozen_by: owner

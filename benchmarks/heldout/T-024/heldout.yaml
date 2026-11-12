@@ -1,0 +1,3 @@
+command: pytest tests/test_validate.py
+files:
+  - tests/test_validate.py

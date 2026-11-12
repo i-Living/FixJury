@@ -1,0 +1,18 @@
+id: T-003
+repo: https://github.com/Delgan/loguru
+issue:
+  number: 1450
+  url: https://github.com/Delgan/loguru/issues/1450
+title: Improve feedback for invalid format keys in logger format strings
+acceptance:
+- 'The behaviour reported in issue #1450 (Improve feedback for invalid format keys in logger format strings)
+  no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_add_option_format.py
+allowed_paths:
+- loguru/_handler.py
+- tests/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-003
+cutoff_assumption: clean

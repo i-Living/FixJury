@@ -1,0 +1,18 @@
+id: T-028
+repo: https://github.com/marshmallow-code/marshmallow
+issue:
+  number: 2869
+  url: https://github.com/marshmallow-code/marshmallow/issues/2869
+title: '`OneOf.options()` emits extra pairs when labels outnumber choices'
+acceptance:
+- 'The behaviour reported in issue #2869 (`OneOf.options()` emits extra pairs when labels outnumber choices)
+  no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_validate.py
+allowed_paths:
+- src/marshmallow/validate.py
+- tests/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-028
+cutoff_assumption: clean

@@ -1,0 +1,3 @@
+command: pytest tests/unit/test_action_comments.py
+files:
+  - tests/unit/test_action_comments.py

@@ -1,0 +1,18 @@
+id: T-007
+repo: https://github.com/Delgan/loguru
+issue:
+  number: 1527
+  url: https://github.com/Delgan/loguru/issues/1527
+title: Queued standard handlers use the consumer thread instead of the producer thread
+acceptance:
+- 'The behaviour reported in issue #1527 (Queued standard handlers use the consumer thread instead of
+  the producer thread) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_standard_handler.py
+allowed_paths:
+- loguru/_simple_sinks.py
+- tests/
+difficulty: hard
+heldout_ref: benchmarks/heldout/T-007
+cutoff_assumption: clean

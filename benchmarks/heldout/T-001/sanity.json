@@ -1,0 +1,31 @@
+{
+  "task_id": "T-001",
+  "checked_at": "2026-11-12T15:42:44Z",
+  "python_version": "Python 3.12.14",
+  "tool_versions": {
+    "pytest": "pytest 8.4.1"
+  },
+  "repo": "https://github.com/Delgan/loguru",
+  "base_commit": "36da8cca14457f6e1d1bbca25fb29ba42b2d70cb",
+  "fix_commit": "2a2c59e1c47d02c6f28e92cd0161e3f01fd74b31",
+  "checks": [
+    "pytest tests/test_ansimarkup_extended.py"
+  ],
+  "heldout_command": "pytest tests/test_ansimarkup_extended.py",
+  "base_checks": {
+    "exit_code": 0,
+    "summary": "92 passed in 0.13s"
+  },
+  "base_heldout": {
+    "exit_code": 1,
+    "summary": "13 failed, 89 passed in 0.23s"
+  },
+  "fix_checks": {
+    "exit_code": 0,
+    "summary": "102 passed in 0.16s"
+  },
+  "fix_heldout": {
+    "exit_code": 0,
+    "summary": "102 passed in 0.15s"
+  }
+}

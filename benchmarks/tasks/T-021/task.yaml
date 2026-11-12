@@ -1,0 +1,61 @@
+id: T-021
+repo: https://github.com/Textualize/rich
+license: MIT
+base_commit: 58ac15120fe254886c10d6253667733c83604cb4
+fix_commit: 19c67b9a3479841e9133bea94607c89ee931d3fc
+issue:
+  number: 4041
+  url: https://github.com/Textualize/rich/issues/4041
+  created_at: 2026-03-22
+  fix_merged_at: 2026-04-12
+  body: |-
+    - [x] I've checked [docs](https://rich.readthedocs.io/en/latest/introduction.html) and [closed issues](https://github.com/Textualize/rich/issues?q=is%3Aissue+is%3Aclosed) for possible solutions.
+    - [x] I can't find my issue in the [FAQ](https://github.com/Textualize/rich/blob/master/FAQ.md).
+
+    `FileProxy` (used by `Live` when `redirect_stdout=True`) inherits `isatty()` from `io.TextIOBase`, which always returns `False`. This breaks code that checks `sys.stdout.isatty()` inside a `Live` context.
+
+    `FileProxy` already delegates `fileno()` (line 56-57) and has a generic `__getattr__` fallback (line 25-26), but `isatty()` is defined on `io.TextIOBase` in the MRO, so `__getattr__` is never reached for it.
+
+    ### Reproduction
+
+    ```python
+    import sys
+    from rich.console import Console
+    from rich.live import Live
+
+    console = Console()
+    print("Before Live:", sys.stdout.isatty())  # True
+
+    with Live("hello", console=console, redirect_stdout=True):
+        print("Inside Live:", sys.stdout.isatty())  # False (should be True)
+
+    print("After Live:", sys.stdout.isatty())  # True
+    ```
+
+    ### Impact
+
+    Any code running inside a `Live` context with `redirect_stdout=True` that branches on `isatty()` gets the wrong answer. This is particularly problematic for applications that use `Live` for streaming display while also executing callbacks/tools that check whether stdout is a terminal.
+
+    ### Suggested fix
+
+    Add an `isatty()` method to `FileProxy` that delegates to the underlying file, consistent with how `fileno()` is already handled:
+
+    ```python
+    def isatty(self) -> bool:
+        return self.__file.isatty()
+    ```
+title: '`FileProxy.isatty()` always returns `False` instead of delegating to the proxied file'
+acceptance:
+- 'The behaviour reported in issue #4041 (`FileProxy.isatty()` always returns `False` instead of delegating
+  to the proxied file) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_file_proxy.py
+allowed_paths:
+- rich/file_proxy.py
+- tests/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-021
+cutoff_assumption: clean
+frozen_at: 2026-11-12T16:02:46+00:00
+frozen_by: owner

@@ -1,0 +1,18 @@
+id: T-002
+repo: https://github.com/Delgan/loguru
+issue:
+  number: 1440
+  url: https://github.com/Delgan/loguru/issues/1440
+title: The microseconds timestamp formatted with "x" time token is incorrect
+acceptance:
+- 'The behaviour reported in issue #1440 (The microseconds timestamp formatted with "x" time token is
+  incorrect) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_datetime.py
+allowed_paths:
+- loguru/_datetime.py
+- tests/
+difficulty: easy
+heldout_ref: benchmarks/heldout/T-002
+cutoff_assumption: clean

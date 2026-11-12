@@ -1,0 +1,65 @@
+id: T-016
+repo: https://github.com/more-itertools/more-itertools
+license: MIT
+base_commit: c0ed9d187906d202b9276a0750b3c377584cb75f
+fix_commit: 1c21c3ae9c7991b73044fe16807b70d1cac61e0b
+issue:
+  number: 1041
+  url: https://github.com/more-itertools/more-itertools/issues/1041
+  created_at: 2025-08-02
+  fix_merged_at: 2026-02-10
+  body: |-
+    ### Description
+
+    Now that `running_median` was added, maybe also add `running_mean`? Likewise a total version and a maxlen version.
+
+    ### References
+
+    - [Moving average or running mean](https://stackoverflow.com/q/13728392) in Stack Overflow (311 upvotes)
+    -  `moving_average` [deque recipe](https://docs.python.org/3/library/collections.html#deque-recipes)
+
+    ### Examples
+
+    ```python
+    print(*running_mean(range(1, 9)))
+    print(*running_mean(range(1, 9), maxlen=3))
+    ```
+
+    Output:
+
+    ```none
+    1.0 1.5 2.0 2.5 3.0 3.5 4.0 4.5
+    1.0 1.5 2.0 3.0 4.0 5.0 6.0 7.0
+    ```
+
+    ### Possible implementation
+
+    ```python
+    from itertools import accumulate, count, chain, repeat, tee, islice
+    from operator import truediv, sub
+
+    def running_mean(iterable, *, maxlen=None):
+        if maxlen is None:
+            return map(truediv, accumulate(iterable), count(1))
+        lengths = chain(range(1, maxlen), repeat(maxlen))
+        it1, it2 = tee(iterable)
+        deltas = chain(islice(it1, maxlen), map(sub, it1, it2))
+        return map(truediv, accumulate(deltas), lengths)
+    ```
+
+    [Attempt This Online!](https://ato.pxeger.com/run?1=hZJBbsQgDEXVbU7BEkbpYtpNW2mOML1CxSROgkQAOaaaOUs3s2mlHqk9TZ1AiLoaNgib_-xv-PgKFxq8u14_I3X3T7933x36URgCJO_tJMwYPJLQTRPHaDVBLRofHfE2aONqgRBA85GAU2aypoFqYfgAqMnjiiCM0Jr3WkzxVFUtdAKjc8b1byNoJ-eS-mQZsqvFqM8W3OHVO1AvleBluhzkGmKOp_C8ECii43SQpcbWbwGr3LncK7VoGdbTMIlDsiJRux7kfq2uVm8yn5PKEN8w9MAytrzRl2QLlvRGTOOQi6RA5z55BHUhZfANGwnN-ty2Si_2cwxo2NTu3zCLlWfF9Bs3yrgfVYau3-EP)
+title: Add `running_mean`?
+acceptance:
+- 'The behaviour reported in issue #1041 (Add `running_mean`?) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_recipes.py
+allowed_paths:
+- more_itertools/recipes.py
+- more_itertools/recipes.pyi
+- tests/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-016
+cutoff_assumption: clean
+frozen_at: 2026-11-12T16:01:17+00:00
+frozen_by: owner

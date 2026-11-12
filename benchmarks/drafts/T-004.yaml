@@ -1,0 +1,18 @@
+id: T-004
+repo: https://github.com/Delgan/loguru
+issue:
+  number: 1500
+  url: https://github.com/Delgan/loguru/issues/1500
+title: Negative timezone offsets with sub-minute components are formatted one minute too large
+acceptance:
+- 'The behaviour reported in issue #1500 (Negative timezone offsets with sub-minute components are formatted
+  one minute too large) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_datetime.py
+allowed_paths:
+- loguru/_datetime.py
+- tests/
+difficulty: easy
+heldout_ref: benchmarks/heldout/T-004
+cutoff_assumption: clean

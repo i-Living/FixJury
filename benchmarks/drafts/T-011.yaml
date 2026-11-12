@@ -1,0 +1,17 @@
+id: T-011
+repo: https://github.com/PyCQA/isort
+issue:
+  number: 2569
+  url: https://github.com/PyCQA/isort/issues/2569
+title: '`sort_reexports` does not respect `isort: skip`'
+acceptance:
+- 'The behaviour reported in issue #2569 (`sort_reexports` does not respect `isort: skip`) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/unit/test_action_comments.py
+allowed_paths:
+- isort/core.py
+- tests/unit/
+difficulty: easy
+heldout_ref: benchmarks/heldout/T-011
+cutoff_assumption: clean

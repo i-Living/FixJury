@@ -1,0 +1,19 @@
+id: T-012
+repo: https://github.com/PyCQA/isort
+issue:
+  number: 2760
+  url: https://github.com/PyCQA/isort/issues/2760
+title: '`appnexus` profile: `no_lines_before` has no effect because a string setting value is iterated
+  character by character'
+acceptance:
+- 'The behaviour reported in issue #2760 (`appnexus` profile: `no_lines_before` has no effect because
+  a string setting value is iterated character by character) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/unit/test_settings.py
+allowed_paths:
+- isort/settings.py
+- tests/unit/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-012
+cutoff_assumption: clean

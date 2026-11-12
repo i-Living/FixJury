@@ -1,0 +1,31 @@
+{
+  "task_id": "T-013",
+  "checked_at": "2026-11-12T15:51:41Z",
+  "python_version": "Python 3.12.14",
+  "tool_versions": {
+    "pytest": "pytest 9.2.0"
+  },
+  "repo": "https://github.com/more-itertools/more-itertools",
+  "base_commit": "c834d6e4a0c4280b7b7750cb0de8dd8acb3d4c2c",
+  "fix_commit": "7de169f7ad39eb1f95f8358225476e6f1a59d3d7",
+  "checks": [
+    "pytest tests/test_more.py"
+  ],
+  "heldout_command": "pytest tests/test_more.py",
+  "base_checks": {
+    "exit_code": 0,
+    "summary": "543 passed, 8 warnings, 2251 subtests passed in 2.98s"
+  },
+  "base_heldout": {
+    "exit_code": 1,
+    "summary": "1 failed, 543 passed, 8 warnings, 2251 subtests passed in 3.15s"
+  },
+  "fix_checks": {
+    "exit_code": 0,
+    "summary": "544 passed, 8 warnings, 2251 subtests passed in 2.85s"
+  },
+  "fix_heldout": {
+    "exit_code": 0,
+    "summary": "544 passed, 8 warnings, 2251 subtests passed in 3.00s"
+  }
+}

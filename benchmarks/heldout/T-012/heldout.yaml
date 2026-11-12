@@ -1,0 +1,3 @@
+command: pytest tests/unit/test_settings.py
+files:
+  - tests/unit/test_settings.py

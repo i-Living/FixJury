@@ -1,0 +1,3 @@
+command: pytest tests/test_more.py
+files:
+  - tests/test_more.py

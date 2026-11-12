@@ -1,0 +1,292 @@
+id: T-004
+repo: https://github.com/Delgan/loguru
+license: MIT
+base_commit: 54c89d609fc98a63b5bf7f801119c5bc526e2016
+fix_commit: 8052eff4c1ba86793a6f38ee890a898e902bc1ea
+issue:
+  number: 1500
+  url: https://github.com/Delgan/loguru/issues/1500
+  created_at: 2026-08-28
+  fix_merged_at: 2026-08-29
+  body: |
+    ## Summary
+
+    `{time:Z}` / `{time:ZZ}` (and the current `master` default format, which uses `Z`) format a timezone offset by splitting hours/minutes with:
+
+    ```python
+    (h, m), s = divmod(abs(offset // 60), 60), abs(offset) % 60
+    ```
+
+    Python `//` performs floor division, so for negative values it rounds toward **−∞**.
+
+    For a negative offset that is not an exact whole number of minutes, `offset // 60` therefore steps one extra minute away from zero. Applying `abs()` afterward preserves that extra minute, while the seconds component is still computed independently from `abs(offset) % 60`.
+
+    As a result, negative timezone offsets with a non-zero sub-minute component are formatted exactly one minute too large.
+
+    Positive offsets and negative offsets that are exact whole minutes are unaffected.
+
+    `datetime.timezone` has supported second-level UTC offsets since Python 3.7, and such offsets also occur in real IANA timezone history. For example, `Africa/Monrovia` used MMT at UTC−00:44:30 until 1972.
+
+    This is reproducible on current `master` (`54c89d6`).
+
+    `#961` / `#962` added support for printing the seconds component of timezone offsets, but the minute calculation still uses the expression above. The existing parametrized test `test_formatting_timezone_offset_down_to_the_second` also contains a negative fractional offset whose expected value reflects the current incorrect calculation, so the suite does not detect the bug.
+
+    ## Code
+
+    ```python
+    # loguru/_datetime.py — _format_timezone
+    offset = tzinfo.utcoffset(dt).total_seconds()
+    sign = "+" if offset >= 0 else "-"
+    (h, m), s = divmod(abs(offset // 60), 60), abs(offset) % 60
+    z = "%s%02d%s%02d" % (sign, h, sep, m)
+    ```
+
+    The current `master` default format in `loguru/_defaults.py` includes:
+
+    ```python
+    {time:YYYY-MM-DD HH:mm:ss.SSS Z}
+    ```
+
+    For example, with `offset = -3661` (−01:01:01):
+
+    ```python
+    -3661 // 60
+    # -62
+    ```
+
+    but the absolute whole-minute count should be:
+
+    ```python
+    abs(-3661) // 60
+    # 61
+    ```
+
+    The current code therefore computes:
+
+    ```python
+    abs(-3661 // 60)
+    # 62
+
+    divmod(62, 60)
+    # (1, 2)
+
+    abs(-3661) % 60
+    # 1
+    ```
+
+    and formats:
+
+    ```text
+    -01:02:01
+    ```
+
+    instead of:
+
+    ```text
+    -01:01:01
+    ```
+
+    The error is always one minute for a negative offset with a non-zero sub-minute remainder.
+
+    ## Expected
+
+    For:
+
+    ```python
+    timezone(timedelta(hours=-1, minutes=-1, seconds=-1))
+    ```
+
+    `{time:Z}` should produce:
+
+    ```text
+    -01:01:01
+    ```
+
+    For:
+
+    ```python
+    ZoneInfo("Africa/Monrovia")
+    ```
+
+    at `1971-01-01 12:00:00`, the historical UTC offset is −00:44:30, so `{time:Z}` should produce:
+
+    ```text
+    -00:44:30
+    ```
+
+    ## Actual
+
+    The same values are currently formatted as:
+
+    ```text
+    -01:02:01
+    -00:45:30
+    ```
+
+    respectively.
+
+    ## Reproduction
+
+    ```python
+    import io
+    from datetime import datetime, timedelta, timezone
+    from zoneinfo import ZoneInfo
+
+    from loguru import logger
+
+
+    def render_z(attach):
+        logger.remove()
+        buf = io.StringIO()
+        logger.add(buf, format="{time:Z}", colorize=False)
+        logger.patch(attach).info("probe")
+        return buf.getvalue().strip()
+
+
+    tz = timezone(timedelta(hours=-1, minutes=-1, seconds=-1))
+
+    print(
+        "stdlib:",
+        render_z(lambda r: r.update(time=r["time"].replace(tzinfo=tz))),
+    )
+
+
+    zi = ZoneInfo("Africa/Monrovia")
+    when = datetime(1971, 1, 1, 12, 0, 0)
+
+
+    def historical(record):
+        record["time"] = record["time"].replace(
+            year=when.year,
+            month=when.month,
+            day=when.day,
+            hour=12,
+            minute=0,
+            second=0,
+            microsecond=0,
+            tzinfo=zi,
+        )
+
+
+    print("IANA:  ", render_z(historical))
+    print("true Monrovia offset:", when.replace(tzinfo=zi).utcoffset())
+    ```
+
+    Observed:
+
+    ```text
+    stdlib: -01:02:01
+    IANA:   -00:45:30
+    true Monrovia offset: -1 day, 23:15:30
+    ```
+
+    `timedelta` represents −2670 seconds as:
+
+    ```text
+    -1 day, 23:15:30
+    ```
+
+    which is equivalent to:
+
+    ```text
+    -00:44:30
+    ```
+
+    ## Existing test case
+
+    The current parametrized test for second-level timezone offsets includes:
+
+    ```python
+    (
+        "HH-mm-ss zz Z ZZ",
+        -12345.06702,
+        "01-02-03 ABC -03:26:45.067020 -032645.067020",
+    ),
+    ```
+
+    However:
+
+    ```text
+    abs(-12345.06702)
+    = 12345.06702
+    = 3h 25m 45.067020s
+    ```
+
+    so the correct formatted values are:
+
+    ```text
+    -03:25:45.067020
+    -032545.067020
+    ```
+
+    The existing expected value therefore encodes the same off-by-one-minute behavior and cannot catch the regression.
+
+    ## Suggested fix
+
+    Take the absolute offset before performing floor division:
+
+    ```python
+    total = abs(offset)
+    (h, m), s = divmod(total // 60, 60), total % 60
+    ```
+
+    Equivalently, the important distinction is:
+
+    ```python
+    abs(offset // 60)
+    ```
+
+    versus:
+
+    ```python
+    abs(offset) // 60
+    ```
+
+    For negative values with a non-zero seconds component, these are not equivalent.
+
+    For example:
+
+    ```python
+    abs(-3661 // 60)
+    # 62
+
+    abs(-3661) // 60
+    # 61
+    ```
+
+    The existing negative test case should also be updated from:
+
+    ```text
+    -03:26:45.067020
+    -032645.067020
+    ```
+
+    to:
+
+    ```text
+    -03:25:45.067020
+    -032545.067020
+    ```
+
+    A focused regression case such as `-01:01:01` or the historical `Africa/Monrovia` offset would also make the negative-side behavior explicit.
+
+    ## Environment
+
+    * Delgan/loguru `54c89d609fc98a63b5bf7f801119c5bc526e2016`
+    * CPython 3.11.2
+    * Linux x86_64
+title: Negative timezone offsets with sub-minute components are formatted one minute too large
+acceptance:
+- 'The behaviour reported in issue #1500 (Negative timezone offsets with sub-minute components are formatted
+  one minute too large) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_datetime.py
+allowed_paths:
+- loguru/_datetime.py
+- tests/
+difficulty: easy
+heldout_ref: benchmarks/heldout/T-004
+cutoff_assumption: clean
+frozen_at: 2026-11-12T16:00:18+00:00
+frozen_by: owner

@@ -1,0 +1,3 @@
+command: pytest tests/test_deserialization.py
+files:
+  - tests/test_deserialization.py

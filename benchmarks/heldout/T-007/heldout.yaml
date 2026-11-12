@@ -1,0 +1,3 @@
+command: pytest tests/test_standard_handler.py
+files:
+  - tests/test_standard_handler.py

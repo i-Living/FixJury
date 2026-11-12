@@ -1,0 +1,32 @@
+id: T-008
+repo: https://github.com/Delgan/loguru
+license: MIT
+base_commit: 874aa41019f8a9f943647a0c74445fb7844157da
+fix_commit: 4e7762bcb44862fce877b1f90f19063834509575
+issue:
+  number: 1537
+  url: https://github.com/Delgan/loguru/issues/1537
+  created_at: 2026-11-03
+  fix_merged_at: 2026-11-03
+  body: |-
+    Someone (“xianggudahundun”) has reported [CVE-2026-120217](https://www.cve.org/CVERecord?id=CVE-2026-120217) against this project. The CVE text is:
+
+    > A vulnerability was detected in Delgan loguru 0.7.3. The affected element is the function AnsiParser.feed of the file loguru/_colorizer.py of the component ANSI Color-Markup Parser. Performing a manipulation results in inefficient regular expression complexity. The attack is possible to be carried out remotely. The exploit is now public and may be used. The vendor was contacted early about this disclosure but did not respond in any way.
+
+    The actual technical details appear to be at https://vuldb.com/submit/992264, including a proof of concept and some general suggestions on how this could be mitigated.
+title: 'CVE-2026-120217: Delgan loguru ANSI Color-Markup _colorizer.py AnsiParser.feed redos'
+acceptance:
+- 'The behaviour reported in issue #1537 (CVE-2026-120217: Delgan loguru ANSI Color-Markup _colorizer.py
+  AnsiParser.feed redos) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_add_option_colorize.py
+allowed_paths:
+- loguru/_colorizer.py
+- loguru/_logger.py
+- tests/
+difficulty: medium
+heldout_ref: benchmarks/heldout/T-008
+cutoff_assumption: clean
+frozen_at: 2026-11-12T16:00:31+00:00
+frozen_by: owner

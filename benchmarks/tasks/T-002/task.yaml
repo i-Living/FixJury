@@ -1,0 +1,49 @@
+id: T-002
+repo: https://github.com/Delgan/loguru
+license: MIT
+base_commit: 764cd30d4b285ca01718ab3162a9f1a022bc49c6
+fix_commit: e49d1539042e18ca17b96fd28727234a0705d22a
+issue:
+  number: 1440
+  url: https://github.com/Delgan/loguru/issues/1440
+  created_at: 2026-02-21
+  fix_merged_at: 2026-02-21
+  body: |-
+    See #1438.
+
+    Reproducible example:
+
+    ```python
+    from datetime import datetime
+    import sys
+
+    from loguru import logger
+    import freezegun
+
+    logger.remove()
+    logger.add(sys.stderr, format="{time:x}")
+
+    dt = datetime(2026, 2, 22, 00, 24, 12, 1)
+
+    with freezegun.freeze_time(dt):
+        logger.info("Test")
+    ```
+
+    Expected output: `1771716252000001`
+
+    Actual output: `1771716252000002`
+title: The microseconds timestamp formatted with "x" time token is incorrect
+acceptance:
+- 'The behaviour reported in issue #1440 (The microseconds timestamp formatted with "x" time token is
+  incorrect) no longer reproduces.'
+- The repository's existing tests for the touched modules still pass.
+checks:
+- pytest tests/test_datetime.py
+allowed_paths:
+- loguru/_datetime.py
+- tests/
+difficulty: easy
+heldout_ref: benchmarks/heldout/T-002
+cutoff_assumption: clean
+frozen_at: 2026-11-12T16:00:11+00:00
+frozen_by: owner
