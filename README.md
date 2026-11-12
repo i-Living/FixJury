@@ -4,7 +4,7 @@
 
 > A patch that compiles, passes CI and opens a pull request is not a fix. FixJury measures how often a fix survives independent verification and human acceptance — and what one accepted fix actually costs.
 
-**Status: phase 1 of 7.** Toolchain, database schema and CI exist, and the corpus tooling works: `fixjury tasks validate`, `tasks freeze` and `tasks draft`. The corpus holds **32 frozen tasks** with held-out bundles and recorded sanity evidence. Sandbox, verification and the benchmark run are not built yet. See [`docs/PLAN.md`](docs/PLAN.md).
+**Status: phase 2 of 7.** Toolchain, database schema, CI and the corpus tooling exist (`fixjury tasks validate|freeze|draft`), and the corpus holds **32 frozen tasks** with held-out bundles and recorded sanity evidence. A sandboxed run loop is in place — locked-down container, in-container tool API, diff capture and a baseline agent — but `fixjury run`, verification and the benchmark run are not wired yet. See [`docs/PLAN.md`](docs/PLAN.md).
 
 ---
 
@@ -140,7 +140,7 @@ AGENTS.md        engineering rules for agents working in this repo
 | --- | --- | --- |
 | 0 | 1 | Toolchain, DB schema, CI, docker-compose |
 | 1 | 2 | 32 frozen tasks + RepairSpec generator |
-| 2 | 3 | Sandbox, diff capture, baseline agent |
+| 2 | 3 | Sandbox, diff capture, baseline agent — landed, `fixjury run` still missing |
 | 3 | 4 | Verification engine with negative fixtures |
 | 4 | 5 | SWE-agent and OpenHands adapters, Redis queue, traces |
 | 5 | 6 | Benchmark run (90 runs) |
