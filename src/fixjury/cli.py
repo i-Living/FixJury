@@ -16,4 +16,3 @@ def main() -> None:
 def version() -> None:
     """Print the installed version."""
     typer.echo(__version__)
-
