@@ -1,0 +1,237 @@
+# CodeRabbit configuration for FixJury.
+# Reference: https://docs.coderabbit.ai/reference/configuration
+# The schema line below lets editors validate this file. An unknown key makes CodeRabbit
+# ignore the WHOLE file silently and fall back to defaults, so validate before pushing.
+# Reviews are advisory: CodeRabbit never blocks a merge and never approves one for us.
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+language: en-US
+early_access: false
+
+# Hard limit: 250 characters. Anything longer and the whole file is rejected.
+tone_instructions: "Be concise and concrete: name the file, the invariant at risk and the fix. No praise, no diff restating, no style nits that ruff, mypy or the pre-commit hooks already enforce."
+
+reviews:
+  # chill keeps the noise down; the value here is the invariant checks below, not nitpicks.
+  profile: chill
+
+  # Advising only. Merging stays a human decision in this repository.
+  auto_approvals:
+    enabled: false
+
+  high_level_summary: true
+  high_level_summary_in_walkthrough: false
+  changed_files_summary: true
+  sequence_diagrams: false
+  estimate_code_review_effort: true
+  collapse_walkthrough: true
+  review_status: true
+
+  poem: false
+  in_progress_fortune: false
+  abort_on_close: true
+
+  # A review that errors out must not look like a passing status. The check itself stays
+  # optional for merging, so this only makes failures visible, it does not gate anything.
+  fail_commit_status: true
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+    ignore_title_keywords:
+      - "WIP"
+      - "skip-review"
+
+  # Caches, build output and lockfiles carry no review value.
+  path_filters:
+    - "!uv.lock"
+    - "!**/*.lock"
+    - "!**/.venv/**"
+    - "!**/__pycache__/**"
+    - "!**/*.pyc"
+    - "!.mypy_cache/**"
+    - "!.ruff_cache/**"
+    - "!.pytest_cache/**"
+    - "!**/*.png"
+    - "!**/*.svg"
+
+  path_instructions:
+    - path: "src/fixjury/sandbox/**"
+      instructions: |
+        Isolation is the product. A sandbox has no network, no Docker socket and never
+        mounts this repository, anything under `benchmarks/` or the held-out tests. Flag
+        any bind mount, network flag, privileged mode or host path that widens that.
+        The diff is the only transport out of the container: verification never reads the
+        agent's workspace. A per-run timeout must kill the container, not only the Python
+        process, and container removal belongs in `finally`.
+
+    - path: "src/fixjury/agents/**"
+      instructions: |
+        Adapters are stateless: no database writes, no global config reads, no objects
+        shared between runs — everything arrives in the run spec. Adapters return a diff
+        and nothing else; never push to the target repository and never open a pull
+        request. Only the baseline adapter calls the model from the platform process;
+        third-party agents run inside the container through the egress allowlist and must
+        send the provider's required session header.
+
+    - path: "src/fixjury/verify/**"
+      instructions: |
+        Verification runs in a fresh container built from `repo@base_commit` + diff; never
+        verify inside the agent's container and never trust its workspace state. Tool
+        versions are pinned per task and stored on the verdict — an unpinned tool silently
+        rewrites history. Every dropped run needs a recorded exclusion reason
+        (`infra_failed`, `timeout`, `flaky_task`).
+
+    - path: "src/fixjury/queue.py"
+      instructions: |
+        Per-tool-call timeout and per-run timeout are different things; the run cap has to
+        kill the container. Retries and resume must never lose an attempt record, and the
+        bench runner reaps leftover containers at start. Keep the vocabulary of the models:
+        task, spec, run, attempt, verdict, rejection, batch, snapshot — no `job`, no
+        `result`.
+
+    - path: "src/fixjury/metrics/**"
+      instructions: |
+        Metrics are computed exactly once, here, from `runs` + `verdicts` + `rejections`,
+        and persisted to `metric_snapshots` with `config_hash` and `pricing_version`. No
+        metric arithmetic in SQL strings, notebooks, the dashboard or the report. A zero
+        denominator yields `null`, never `0` — `cost_per_accepted_fix` is `null` when
+        nothing was accepted. Costs on different `pricing_version` values are not
+        comparable and must carry the version wherever money is reported.
+
+    - path: "src/fixjury/review/**"
+      instructions: |
+        Review is blind: agent and model fields are stripped from what the reviewer sees,
+        and shuffle order is stored in `review_batches`, never regenerated on read. Flag
+        any path that leaks the agent through patch metadata, commit messages, code
+        comments or PR-style headers. Only a patch with `automated_pass = true` may reach a
+        human reviewer.
+
+    - path: "src/fixjury/models.py"
+      instructions: |
+        Schema changes go through Alembic; `create_all` is allowed in tests only.
+        `alembic downgrade` leaves PostgreSQL enum types behind, so `downgrade()` must drop
+        them explicitly or the next upgrade fails with "type ... already exists". Enum
+        member names equal their stored values on purpose — do not "fix" that without a
+        migration.
+
+    - path: "migrations/**"
+      instructions: |
+        Every `upgrade()` needs a working `downgrade()` that drops the tables AND the
+        PostgreSQL enum types it created. Flag migrations that rewrite or delete historical
+        run data: published numbers must stay reproducible.
+
+    - path: "src/fixjury/prompts/**"
+      instructions: |
+        Prompts are English and live in these `*.md` files — no prompt string inside Python.
+        A prompt change that alters what an agent sees is a benchmark decision, not a
+        refactor: it needs to be called out in the pull request.
+
+    - path: "src/fixjury/spec/**"
+      instructions: |
+        `RepairSpec` is what the agent receives. It must not carry held-out tests, agent or
+        model identity, or anything that survives into blind review. Rendering is
+        deterministic for the same input.
+
+    - path: "benchmarks/**"
+      instructions: |
+        The corpus is frozen: editing `benchmarks/tasks/*/task.yaml` after any run exists
+        invalidates the comparison, so a task change needs a new task version. Held-out
+        tests are public by design — isolation comes from the setup, not from secrecy — so
+        never "hide" them, and never expect them to be secret.
+
+    - path: "src/**/*.py"
+      instructions: |
+        Functions and modules over classes. Classes are allowed only for SQLAlchemy models,
+        pydantic models, and the `AgentAdapter` protocol and its adapters. Full type hints;
+        `Any` needs a comment. Async for I/O, with the synchronous docker SDK wrapped in
+        `asyncio.to_thread`. Settings through `pydantic-settings` — no hardcoded path, no
+        secret in the repository.
+
+    - path: "tests/**"
+      instructions: |
+        Unit tests cover pure logic (scope policy, metrics, cost, taxonomy). Anything that
+        needs docker or postgres is marked `@pytest.mark.integration`. No real network
+        calls, no dependence on execution order, no assertions on wall-clock timing.
+
+    - path: "**/*.md"
+      instructions: |
+        `docs/PLAN.md` is the authority: if `AGENTS.md`, `README.md` or the code disagree
+        with it, the same change fixes them. Commands in docs must match the `fixjury` CLI
+        and `pyproject.toml` scripts. Never paste a key, token or `.env` value.
+
+    - path: "**/*"
+      instructions: |
+        Repo-wide rules from `AGENTS.md`:
+        - No new dependency, DB schema change, metric definition change, rubric change or
+          sandbox limit change without explicit human approval in the pull request.
+        - Never commit keys, tokens or `.env`; never mount this repository into an agent
+          sandbox; never auto-merge or push to a target repository.
+        - One vocabulary everywhere: task, spec, run, attempt, verdict, rejection, batch,
+          snapshot. Do not introduce `job`, `result` or `review_result`.
+        - Conventional Commits, one plan task per commit.
+        - Every finding names the file, the concrete risk and the fix. Skip anything the
+          linters already enforce.
+
+  tools:
+    ruff:
+      enabled: true
+    markdownlint:
+      enabled: true
+    yamllint:
+      enabled: true
+    gitleaks:
+      enabled: true
+    actionlint:
+      enabled: true
+    checkov:
+      enabled: true
+
+  pre_merge_checks:
+    # AGENTS.md requires Conventional Commits.
+    title:
+      mode: warning
+      requirements: "Conventional Commits in English, imperative mood, under 72 characters, one plan task per commit."
+    description:
+      mode: warning
+    # No issue-tracking workflow yet; keep the noise out.
+    issue_assessment:
+      mode: "off"
+    custom_checks:
+      - name: "AGENTS.md invariants"
+        mode: warning
+        instructions: |
+          Fail when a change breaks an invariant from AGENTS.md without saying so:
+          verifying inside the agent container or trusting its workspace; mounting this
+          repository or `benchmarks/` into an agent sandbox; giving a sandbox network or a
+          docker socket; letting an adapter, an agent or the UI write metrics or verdicts;
+          metric arithmetic outside `src/fixjury/metrics/`; metric snapshots written
+          without `config_hash` and `pricing_version`; reporting `0` where the denominator
+          is zero; comparing costs across different `pricing_version` values without
+          labelling them; pushing to a target repository or opening a pull request there.
+      - name: "Unapproved dependency or schema change"
+        mode: warning
+        instructions: |
+          Fail when the diff adds a runtime or dev dependency in `pyproject.toml`, changes a
+          metric definition, changes the review rubric, or relaxes sandbox limits and
+          timeouts, and the pull request body does not record explicit approval for it.
+      - name: "Blind review not leaky"
+        mode: warning
+        instructions: |
+          Fail when a change makes agent or model identity reach the reviewer — through the
+          review payload, patch metadata, commit messages, code comments or generated
+          headers — or regenerates batch order instead of reading the stored shuffle.
+
+knowledge_base:
+  # AGENTS.md and PLAN.md are the review criteria, not just documentation.
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "AGENTS.md"
+      - "docs/PLAN.md"
+  learnings:
+    scope: local
+
+chat:
+  auto_reply: true

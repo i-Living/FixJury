@@ -131,6 +131,15 @@ These are load-bearing. Breaking one silently invalidates published numbers.
 - **Blind review leaks through metadata.** Patch metadata, commit messages, code comments and PR-style formatting can reveal the agent, so packaging strips names and normalizes headers before review.
 - **A zero denominator is not zero cost.** `cost_per_accepted_fix` is `null`, not `0`, when nothing was accepted; the report must show `null`.
 
+## Review bot
+
+CodeRabbit reviews every pull request. Its configuration is [`.coderabbit.yaml`](.coderabbit.yaml), validated against the published schema (`https://coderabbit.ai/integrations/schema.v2.json`): an unknown key makes CodeRabbit drop the whole file silently and review with defaults instead.
+
+- It is advisory. `auto_approvals` is off and none of its checks is required to merge; a human merges.
+- It covers what the check chain cannot see: the invariants above (isolation, blind review, metrics computed once) and the "ask first" list.
+- Its findings are triaged like a human review — fix them, or say in the pull request why not. Never apply a suggestion that adds a dependency, changes the schema, a metric definition, the rubric or sandbox limits.
+- Review comments are English, like the code and the prompts.
+
 ## Verification
 
 Before declaring a phase complete, run the check chain and the phase verification listed in `docs/PLAN.md` §11. The MVP is done when `docs/PLAN.md` §14 is satisfied: frozen corpus, 90 finished runs, 90 human verdicts, computed metrics, published report, green CI.
