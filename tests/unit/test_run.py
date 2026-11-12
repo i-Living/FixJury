@@ -135,4 +135,9 @@ def test_the_registry_builds_the_baseline_adapter() -> None:
 
 def test_the_registry_names_the_agents_it_knows() -> None:
     with pytest.raises(UnknownAgentError, match="known agents"):
-        build_adapter("swe-agent")
+        build_adapter("no-such-agent")
+
+
+def test_the_harnesses_are_registered_even_without_an_image() -> None:
+    assert "swe-agent" in known_agents()
+    assert "openhands" in known_agents()

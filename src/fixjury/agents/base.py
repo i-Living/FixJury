@@ -16,6 +16,16 @@ from typing import Protocol
 
 
 @dataclass(frozen=True)
+class LlmConfig:
+    """The model endpoint a run may talk to. Resolved by the platform."""
+
+    base_url: str = ""
+    model: str = ""
+    api_key: str = ""
+    session: str = ""
+
+
+@dataclass(frozen=True)
 class RunRequest:
     """Everything one run needs, resolved by the platform beforehand."""
 
@@ -27,6 +37,7 @@ class RunRequest:
     image: str
     max_steps: int = 30
     timeout_s: int = 1200
+    llm: LlmConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -51,7 +62,10 @@ type ModelCall = Callable[[list[dict[str, str]]], Awaitable[tuple[str, int, int]
 class AgentAdapter(Protocol):
     """A coding agent the platform can run against a task."""
 
-    name: str
-    version: str
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def version(self) -> str: ...
 
     async def run(self, request: RunRequest) -> AgentResult: ...
