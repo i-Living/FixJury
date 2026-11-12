@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from fixjury.tasks.heldout import HELDOUT_PATCH, REFERENCE_PATCH, validate_heldout
+from fixjury.tasks.heldout import REFERENCE_PATCH, validate_heldout
 from fixjury.tasks.loader import (
     TaskFileError,
     discover_task_paths,
@@ -18,6 +18,7 @@ from fixjury.tasks.loader import (
     read_index,
     read_task,
 )
+from fixjury.tasks.sanity import SANITY_FILENAME, SanityError, read_sanity
 from fixjury.tasks.schema import CUTOFF_DATE, TaskDocument, parse_check
 
 
@@ -109,10 +110,39 @@ def validate_task(document: TaskDocument, *, corpus_root: Path) -> list[Finding]
         )
 
     bundle = heldout_path(corpus_root, document.id)
-    if not (bundle / HELDOUT_PATCH).is_file():
-        findings.append(Finding(where, f"held-out bundle has no {HELDOUT_PATCH}"))
     for problem in validate_heldout(bundle):
         findings.append(Finding(where, problem))
+
+    sanity_file = bundle / SANITY_FILENAME
+    if not sanity_file.is_file():
+        findings.append(
+            Finding(
+                where, f"held-out bundle has no {SANITY_FILENAME}; run scripts/corpus_sanity.py"
+            )
+        )
+    else:
+        try:
+            sanity = read_sanity(sanity_file)
+        except SanityError as exc:
+            findings.append(Finding(where, str(exc)))
+        else:
+            if sanity.task_id != document.id:
+                findings.append(
+                    Finding(
+                        where,
+                        f"{SANITY_FILENAME} is for {sanity.task_id}, not {document.id}",
+                    )
+                )
+            if sanity.base_commit != document.base_commit:
+                findings.append(
+                    Finding(where, f"{SANITY_FILENAME} was recorded for another base_commit")
+                )
+            if sanity.fix_commit != document.fix_commit:
+                findings.append(
+                    Finding(where, f"{SANITY_FILENAME} was recorded for another fix_commit")
+                )
+            for problem in sanity.problems():
+                findings.append(Finding(where, problem))
 
     return findings
 

@@ -1,22 +1,12 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 from pathlib import Path
 
 from fixjury.tasks.loader import CorpusIndex, write_index, write_task
 from fixjury.tasks.schema import TaskDocument
 from fixjury.tasks.validate import validate_corpus
-
-NEW_FILE_PATCH = """\
-diff --git a/tests/test_regression.py b/tests/test_regression.py
-new file mode 100644
-index 0000000..1111111
---- /dev/null
-+++ b/tests/test_regression.py
-@@ -0,0 +1,2 @@
-+def test_regression() -> None:
-+    assert True
-"""
 
 
 def build_corpus(tmp_path: Path) -> Path:
@@ -48,10 +38,31 @@ def build_corpus(tmp_path: Path) -> Path:
     write_task(root / "tasks" / "T-001" / "task.yaml", document)
 
     bundle = root / "heldout" / "T-001"
-    bundle.mkdir(parents=True)
-    (bundle / "heldout.patch").write_text(NEW_FILE_PATCH, encoding="utf-8")
+    overlay = bundle / "files" / "tests" / "test_regression.py"
+    overlay.parent.mkdir(parents=True)
+    overlay.write_text("def test_regression() -> None:\n    assert True\n", encoding="utf-8")
     (bundle / "heldout.yaml").write_text(
         "command: pytest tests/test_regression.py\nfiles: [tests/test_regression.py]\n",
+        encoding="utf-8",
+    )
+    (bundle / "sanity.json").write_text(
+        json.dumps(
+            {
+                "task_id": "T-001",
+                "checked_at": "2026-11-12T10:10:00Z",
+                "python_version": "3.12.12",
+                "tool_versions": {"pytest": "9.2.0"},
+                "repo": "https://github.com/pallets/click",
+                "base_commit": "a" * 40,
+                "fix_commit": "b" * 40,
+                "checks": ["pytest tests/test_shell_completion.py"],
+                "heldout_command": "pytest tests/test_regression.py",
+                "base_checks": {"exit_code": 0, "summary": "3 passed"},
+                "base_heldout": {"exit_code": 1, "summary": "1 failed"},
+                "fix_checks": {"exit_code": 0, "summary": "3 passed"},
+                "fix_heldout": {"exit_code": 0, "summary": "1 passed"},
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -122,13 +133,13 @@ def test_pre_cutoff_issue_is_reported(tmp_path: Path) -> None:
     assert any("contamination cut-off" in finding.message for finding in findings)
 
 
-def test_missing_heldout_patch_is_reported(tmp_path: Path) -> None:
+def test_missing_heldout_overlay_is_reported(tmp_path: Path) -> None:
     root = build_corpus(tmp_path)
-    (root / "heldout" / "T-001" / "heldout.patch").unlink()
+    (root / "heldout" / "T-001" / "files" / "tests" / "test_regression.py").unlink()
 
     findings = validate_corpus(root)
 
-    assert any("held-out bundle has no heldout.patch" in finding.message for finding in findings)
+    assert any("has no files/tests/test_regression.py" in finding.message for finding in findings)
 
 
 def test_check_pointing_into_benchmarks_is_reported(tmp_path: Path) -> None:
@@ -163,3 +174,36 @@ def test_min_tasks_is_enforced(tmp_path: Path) -> None:
     findings = validate_corpus(root, min_tasks=2)
 
     assert any("expected at least 2" in finding.message for finding in findings)
+
+
+def test_missing_sanity_evidence_is_reported(tmp_path: Path) -> None:
+    root = build_corpus(tmp_path)
+    (root / "heldout" / "T-001" / "sanity.json").unlink()
+
+    findings = validate_corpus(root)
+
+    assert any("no sanity.json" in finding.message for finding in findings)
+
+
+def test_failed_sanity_evidence_is_reported(tmp_path: Path) -> None:
+    root = build_corpus(tmp_path)
+    path = root / "heldout" / "T-001" / "sanity.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["base_heldout"]["exit_code"] = 0
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    findings = validate_corpus(root)
+
+    assert any("does not cover the defect" in finding.message for finding in findings)
+
+
+def test_sanity_evidence_for_another_commit_is_reported(tmp_path: Path) -> None:
+    root = build_corpus(tmp_path)
+    path = root / "heldout" / "T-001" / "sanity.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["base_commit"] = "c" * 40
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    findings = validate_corpus(root)
+
+    assert any("another base_commit" in finding.message for finding in findings)
