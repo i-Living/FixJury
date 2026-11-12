@@ -73,9 +73,14 @@ async def process_run(
     if run.status is RunStatus.infra_failed:
         retry = queue.next_attempt(run.attempt)
         if retry is not None:
-            await queue.enqueue(
-                session, client, task_id=run.task_id, agent=run.agent, attempt=retry
-            )
+            try:
+                await queue.enqueue(
+                    session, client, task_id=run.task_id, agent=run.agent, attempt=retry
+                )
+            except queue.QueueError as exc:
+                # A retry that already exists in another state is not a reason to
+                # kill the worker: the row is the record, the queue is transport.
+                LOGGER.warning("no retry queued for %s: %s", run.id, exc)
     return run
 
 
