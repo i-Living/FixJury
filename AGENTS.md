@@ -34,7 +34,11 @@ docker compose up -d                      # postgres + redis
 uv run alembic upgrade head               # migrations
 uv run fixjury tasks validate benchmarks  # corpus check
 uv run fixjury run --task T-001 --agent baseline
-uv run fixjury bench --tasks benchmarks/index.json --agents baseline,swe-agent,openhands
+uv run fixjury verify --run <id>          # fresh container, policy, held-out
+uv run fixjury bench --agents baseline,swe-agent --verify
+uv run fixjury review pack && uv run fixjury review serve
+uv run fixjury metrics compute --agent baseline
+uv run fixjury report --charts && uv run fixjury dashboard
 ```
 
 Definition of done for any code change:
@@ -50,21 +54,26 @@ src/fixjury/config.py      settings from env, pricing version
 src/fixjury/db.py          engine and session
 src/fixjury/models.py      SQLAlchemy models (tasks, runs, verdicts, rejections, batches, snapshots)
 src/fixjury/cli.py         typer entry point
-src/fixjury/queue.py       Redis queue, worker loop, retries, resume
+src/fixjury/queue.py       Redis lists: enqueue, claim, resume
+src/fixjury/worker.py      one run per claim, retry as a new attempt
+src/fixjury/bench.py       plan, enqueue and drain a task x agent grid
+src/fixjury/run.py         run one agent on one task, record it in runs
+src/fixjury/telemetry.py   OTel spans; the trace id is stored on every run
 src/fixjury/tasks/         task.yaml schema, loader, freeze and validate
 src/fixjury/spec/          RepairSpec generation and rendering
-src/fixjury/agents/        AgentAdapter protocol + baseline, swe_agent, openhands
-src/fixjury/sandbox/       container lifecycle, in-container tool API, scope policy
-src/fixjury/verify/        check runner, held-out tests, verdict assembly
-src/fixjury/review/        blind batching, rubric, rejection taxonomy, review API
-src/fixjury/metrics/       metric definitions, computation, cost
-src/fixjury/report/        markdown + charts
-src/fixjury/api/           FastAPI app and routes
+src/fixjury/agents/        AgentAdapter protocol + baseline + container harness
+src/fixjury/sandbox/       container lifecycle, tool API, diff capture, egress proxy
+src/fixjury/verify/        check runner, held-out tests, policy, verdict assembly
+src/fixjury/review/        blind batching, rubric, review page (app.py + templates/)
+src/fixjury/metrics/       metric definitions (compute.py), snapshots (service.py), cost
+src/fixjury/report/        markdown, charts, static dashboard export
 src/fixjury/prompts/       *.md prompt files (English)
+config/pricing.yaml        pinned rates + pricing_version
 benchmarks/tasks/T-xxx/    task.yaml, public fixtures
 benchmarks/heldout/T-xxx/  held-out tests + reference.patch, mounted only in verification
 tests/unit, tests/integration
 docs/PLAN.md               spec + plan
+docs/plans/                one plan + checkpoint per phase
 ```
 
 ## Invariants
