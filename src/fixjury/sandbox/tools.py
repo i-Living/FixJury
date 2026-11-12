@@ -69,6 +69,7 @@ async def exec_command(
     *,
     timeout_s: float = 120.0,
     workdir: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> ExecResult:
     """Run ``argv`` inside the workspace. No shell, no string interpolation."""
 
@@ -81,7 +82,7 @@ async def exec_command(
 
     def run() -> ExecResult:
         try:
-            result = handle.container.exec_run(list(argv), workdir=target)
+            result = handle.container.exec_run(list(argv), workdir=target, environment=env)
         except DockerException as exc:
             raise ToolError(f"exec failed: {exc}") from exc
         raw = result.output or b""

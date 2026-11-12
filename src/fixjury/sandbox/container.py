@@ -44,6 +44,10 @@ class SandboxSpec:
     pids_limit: int = 256
     tmpfs_mb: int = 512
     timeout_s: int = 1200
+    # Network is off for anything that runs an agent. It is switched on for the
+    # preparation container only, which installs dependencies and executes no
+    # agent-authored code.
+    network: bool = False
     # Running as the invoking user keeps the workspace bind writable while the
     # root filesystem stays read-only; capabilities are dropped, so root inside
     # could not write to a home directory owned by another uid anyway.
@@ -86,7 +90,7 @@ def _create_container(client: docker.DockerClient, spec: SandboxSpec) -> Contain
         command=KEEPALIVE_COMMAND,
         working_dir=spec.workdir,
         user=spec.user,
-        network_mode="none",
+        network_mode="bridge" if spec.network else "none",
         read_only=True,
         tmpfs={"/tmp": f"rw,noexec,nosuid,size={spec.tmpfs_mb}m"},  # noqa: S108 - inside the container
         volumes={str(spec.workspace): {"bind": spec.workdir, "mode": "rw"}},
