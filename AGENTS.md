@@ -38,8 +38,8 @@ uv run fixjury verify --run <id>          # fresh container, policy, held-out
 uv run fixjury bench --agents baseline,swe-agent --verify
 uv run fixjury review pack && uv run fixjury review serve
 uv run fixjury metrics compute --agent baseline
-uv run fixjury report --charts && uv run fixjury dashboard
 (cd web && npm ci)                        # once, Node 20.9 or newer
+uv run fixjury report --charts && uv run fixjury dashboard
 ```
 
 `fixjury dashboard` shells out to `npm run build` in `web/` and copies the static export to `--out`, so
