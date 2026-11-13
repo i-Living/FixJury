@@ -125,14 +125,19 @@ def test_a_harness_with_a_config_file_needs_a_function_to_write_it() -> None:
 
 
 def test_exit_zero_is_not_a_success_when_the_harness_stopped_at_its_limit() -> None:
-    declared, reason = outcome(0, False, MiniRun(1, 1, 30, "LimitsExceeded"), "Submitted")
+    declared, reason = outcome(
+        0,
+        False,
+        MiniRun(tokens_in=1, tokens_out=1, steps=30, exit_status="LimitsExceeded"),
+        "Submitted",
+    )
 
     assert declared is False
     assert reason == "harness stopped with status LimitsExceeded"
 
 
 def test_a_submission_declares_success_only_with_a_diff() -> None:
-    submitted = MiniRun(1, 1, 4, "Submitted")
+    submitted = MiniRun(tokens_in=1, tokens_out=1, steps=4, exit_status="Submitted")
 
     assert outcome(0, False, submitted, "Submitted") == (True, None)
     assert outcome(0, True, submitted, "Submitted") == (False, None)
@@ -142,3 +147,54 @@ def test_without_a_trajectory_the_declaration_falls_back_to_the_exit_code() -> N
     assert outcome(0, False, None, "") == (True, None)
     assert outcome(0, False, None, "Submitted") == (False, None)
     assert outcome(3, False, None, "") == (False, "harness exited 3")
+
+
+def test_the_command_loads_minis_packaged_config_not_one_from_the_repository() -> None:
+    """A bare `-c mini.yaml` resolves against the workspace first, so it cannot be used."""
+
+    script = " ".join(mini.COMMAND)
+
+    assert "locate_file" in script, "the packaged path is resolved, not named"
+    assert "-c $PKG/mini.yaml" in script or '"$PKG/mini.yaml"' in script
+    assert "-c mini.yaml" not in script
+
+
+def test_a_trajectory_symlink_is_refused(tmp_path: Path) -> None:
+    """The agent writes the trajectory: a symlink to a device must not be followed."""
+
+    outside = tmp_path / "outside.json"
+    outside.write_text(json.dumps(_trajectory()))
+    link = tmp_path / "traj.json"
+    link.symlink_to(outside)
+
+    assert read_run(link) is None
+    assert outside.exists(), "reading must not have touched the target"
+
+
+def test_a_trajectory_that_is_not_a_regular_file_is_refused(tmp_path: Path) -> None:
+    directory = tmp_path / "traj.json"
+    directory.mkdir()
+
+    assert read_run(directory) is None
+
+
+def test_a_trajectory_over_the_cap_is_refused_without_reading_it(tmp_path: Path) -> None:
+    path = tmp_path / "traj.json"
+    path.write_text("{}")
+    with path.open("r+b") as handle:
+        handle.truncate(mini.MAX_TRAJECTORY_BYTES + 1)
+
+    assert read_run(path) is None
+
+
+def test_messages_that_are_not_a_list_cost_the_tokens_but_not_the_status(tmp_path: Path) -> None:
+    """One broken field must not throw away the exit status the run needs."""
+
+    payload = _trajectory()
+    payload["messages"] = 1
+    path = tmp_path / "traj.json"
+    path.write_text(json.dumps(payload))
+
+    run = read_run(path)
+
+    assert run == MiniRun(tokens_in=0, tokens_out=0, steps=2, exit_status="Submitted")

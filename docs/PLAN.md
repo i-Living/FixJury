@@ -311,7 +311,7 @@ docker compose up -d
 uv run alembic upgrade head
 uv run fixjury tasks validate benchmarks
 uv run fixjury run --task T-001 --agent baseline
-uv run fixjury bench --tasks benchmarks/index.json --agents baseline,mini,openhands
+uv run fixjury bench --agents baseline,mini,openhands
 uv run fixjury report --snapshot <id>
 ```
 

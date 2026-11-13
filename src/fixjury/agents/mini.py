@@ -23,8 +23,11 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+import os
+import stat
 from pathlib import Path
+
+from pydantic import BaseModel, ConfigDict
 
 from fixjury.agents.base import LlmConfig
 
@@ -38,11 +41,25 @@ DEFAULT_CONFIG = "mini.yaml"
 TRAJECTORY_FORMAT = "mini-swe-agent"
 # mini writes this once the agent issued its finish command.
 SUCCESS_STATUS = "Submitted"
+# A run of a handful of model calls writes kilobytes. The cap only has to be well
+# above that, and well below what would hurt the worker.
+MAX_TRAJECTORY_BYTES = 8 * 1024 * 1024
 
+# mini resolves a bare config name against the working directory before its own
+# package directory, so `-c mini.yaml` inside a target repository would load a file
+# the repository committed. The packaged path is asked for by name at run time: the
+# image pins the version, but the install prefix is not ours to hardcode.
+_PACKAGED_CONFIG = (
+    "python3 -c 'import importlib.metadata as m;"
+    ' print(m.distribution("mini-swe-agent").locate_file("minisweagent/config"))\''
+)
 COMMAND: tuple[str, ...] = (
     "sh",
     "-c",
-    f'mini -c {DEFAULT_CONFIG} -c {CONFIG_FILENAME} -t "$(cat TASK.md)" -o {TRAJECTORY_FILENAME}',
+    # One level of quoting only: the substitution prints the directory, and the
+    # filename is appended inside the script.
+    f'PKG="$({_PACKAGED_CONFIG})" && mini -c "$PKG/mini.yaml"'
+    f' -c {CONFIG_FILENAME} -t "$(cat TASK.md)" -o {TRAJECTORY_FILENAME}',
 )
 # MSWEA_CONFIGURED silences the first-run interview (it reads from stdin, which a
 # sandbox does not have); HOME keeps mini's own last-run copy inside the tmpfs.
@@ -92,14 +109,54 @@ def config_text(llm: LlmConfig | None, max_steps: int) -> str:
     return "\n".join(lines) + "\n"
 
 
-@dataclass(frozen=True)
-class MiniRun:
+class MiniRun(BaseModel):
     """What mini's own trajectory says about one run."""
+
+    model_config = ConfigDict(frozen=True)
 
     tokens_in: int
     tokens_out: int
     steps: int
     exit_status: str
+
+
+def _read_bounded(path: Path) -> bytes | None:
+    """Read a regular file without following a symlink and without trusting its size.
+
+    The trajectory is written by the agent, inside a container, and read here with
+    the worker's own privileges. A symlink to ``/dev/zero`` or to a file on the host
+    must be refused, not followed, and a file whose reported size lies must not be
+    read past the cap.
+    """
+
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as exc:
+        LOGGER.warning("mini trajectory at %s is unreadable: %s", path, exc)
+        return None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            LOGGER.warning("mini trajectory at %s is not a regular file", path)
+            return None
+        if info.st_size > MAX_TRAJECTORY_BYTES:
+            LOGGER.warning(
+                "mini trajectory at %s is %d bytes, over the %d cap",
+                path,
+                info.st_size,
+                MAX_TRAJECTORY_BYTES,
+            )
+            return None
+        raw = os.read(fd, MAX_TRAJECTORY_BYTES + 1)
+    except OSError as exc:
+        LOGGER.warning("mini trajectory at %s is unreadable: %s", path, exc)
+        return None
+    finally:
+        os.close(fd)
+    if len(raw) > MAX_TRAJECTORY_BYTES:
+        LOGGER.warning("mini trajectory at %s grew past the cap while reading", path)
+        return None
+    return raw
 
 
 def read_run(path: Path) -> MiniRun | None:
@@ -110,10 +167,13 @@ def read_run(path: Path) -> MiniRun | None:
     the caller logs that instead of inventing numbers.
     """
 
+    raw = _read_bounded(path)
+    if raw is None:
+        return None
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        LOGGER.warning("mini trajectory at %s is unreadable: %s", path, exc)
+        payload = json.loads(raw)
+    except ValueError as exc:
+        LOGGER.warning("mini trajectory at %s is not JSON: %s", path, exc)
         return None
     if not isinstance(payload, dict):
         LOGGER.warning("mini trajectory at %s is not an object", path)
@@ -121,10 +181,19 @@ def read_run(path: Path) -> MiniRun | None:
     if not str(payload.get("trajectory_format", "")).startswith(TRAJECTORY_FORMAT):
         LOGGER.warning("mini trajectory at %s is not a mini trajectory", path)
         return None
+    raw_messages = payload.get("messages")
+    if isinstance(raw_messages, list):
+        messages: list[object] = raw_messages
+    else:
+        # No usable per-call records, so no token counts. The exit status is written
+        # separately and still decides whether the agent declared success, so the run
+        # keeps its status instead of losing both signals to one broken field.
+        LOGGER.warning("mini trajectory at %s has no message list", path)
+        messages = []
 
     tokens_in = 0
     tokens_out = 0
-    for message in payload.get("messages") or []:
+    for message in messages:
         if not isinstance(message, dict):
             continue
         extra = message.get("extra")

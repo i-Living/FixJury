@@ -12,6 +12,8 @@ harness can reach the model endpoint and nothing else.
 from __future__ import annotations
 
 import logging
+import os
+import shutil
 import tempfile
 import time
 from collections.abc import Callable
@@ -106,11 +108,11 @@ class ContainerHarnessAdapter:
     async def run(self, request: RunRequest) -> AgentResult:
         self.spec.validate()
         workspace = request.workspace
-        (workspace / TASK_FILENAME).write_text(request.spec, encoding="utf-8")
+        write_workspace_file(workspace, TASK_FILENAME, request.spec)
         write_config = self.spec.config_text
         if self.spec.config_file and write_config is not None:
-            (workspace / self.spec.config_file).write_text(
-                write_config(request.llm, request.max_steps), encoding="utf-8"
+            write_workspace_file(
+                workspace, self.spec.config_file, write_config(request.llm, request.max_steps)
             )
 
         target = llm_target(request.llm)
@@ -194,6 +196,28 @@ class ContainerHarnessAdapter:
         )
 
 
+def write_workspace_file(workspace: Path, name: str, text: str) -> None:
+    """Write a platform file into the workspace without following a symlink.
+
+    The workspace is a checkout of somebody else's repository at ``base_commit``, so
+    the path we are about to write may already exist as a symlink that repository
+    committed. ``write_text`` would follow it and write through to whatever it
+    points at, with the worker's privileges; ``O_NOFOLLOW`` refuses, and marking the
+    file private keeps the API key off every other account on the host.
+    """
+
+    target = workspace / name
+    if target.is_symlink() or target.is_file():
+        target.unlink()
+    elif target.is_dir():
+        shutil.rmtree(target)
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        os.write(fd, text.encode("utf-8"))
+    finally:
+        os.close(fd)
+
+
 def workspace_for_run(prefix: str = "fixjury-harness-") -> Path:
     return Path(tempfile.mkdtemp(prefix=prefix))
 
@@ -230,4 +254,5 @@ __all__ = [
     "outcome",
     "proxy_environment",
     "workspace_for_run",
+    "write_workspace_file",
 ]
