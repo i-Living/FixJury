@@ -39,13 +39,20 @@ uv run fixjury bench --agents baseline,swe-agent --verify
 uv run fixjury review pack && uv run fixjury review serve
 uv run fixjury metrics compute --agent baseline
 uv run fixjury report --charts && uv run fixjury dashboard
+cd web && npm ci && npm run build          # the metrics page, once, before the command above
 ```
+
+`fixjury dashboard` shells out to `npm run build` in `web/` and copies the static export to `--out`, so
+Node 20.9 or newer and a `npm ci` in `web/` are prerequisites for that one command. CI does not build the
+page: the Python check chain below is the merge gate.
 
 Definition of done for any code change:
 
 ```bash
 uv run ruff check . && uv run ruff format --check . && uv run mypy src && uv run pytest -q
 ```
+
+A change that touches `web/` also runs `cd web && npm run typecheck && npm run build`.
 
 ## Layout
 
@@ -66,11 +73,12 @@ src/fixjury/sandbox/       container lifecycle, tool API, diff capture, egress p
 src/fixjury/verify/        check runner, held-out tests, policy, verdict assembly
 src/fixjury/review/        blind batching, rubric, review page (app.py + templates/)
 src/fixjury/metrics/       metric definitions (compute.py), snapshots (service.py), cost
-src/fixjury/report/        markdown, charts, static dashboard export
+src/fixjury/report/        markdown report, charts, the export the metrics page is built from
 src/fixjury/prompts/       *.md prompt files (English)
 config/pricing.yaml        pinned rates + pricing_version
 benchmarks/tasks/T-xxx/    task.yaml, public fixtures
 benchmarks/heldout/T-xxx/  held-out tests + reference.patch, mounted only in verification
+web/                       read-only metrics page: Next.js app, static export, charts via Chart.js
 tests/unit, tests/integration
 docs/PLAN.md               spec + plan
 docs/plans/                one plan + checkpoint per phase
