@@ -5,8 +5,9 @@ one endpoint: the model provider. Everything else stays unreachable. This proxy
 is that route — it accepts ``CONNECT host:port`` and absolute-URI requests, and
 forwards only targets on the allowlist.
 
-It runs in the platform process, bound to the docker bridge address, so no
-platform file is ever mounted into an agent container.
+It runs in the platform process, bound to the gateway of the run's internal
+network, so no platform file is ever mounted into an agent container — and the
+container has no other address to reach.
 """
 
 from __future__ import annotations
@@ -16,29 +17,10 @@ import contextlib
 import logging
 from dataclasses import dataclass, field
 
-import docker
-
 LOGGER = logging.getLogger(__name__)
 FORBIDDEN = b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
 ESTABLISHED = b"HTTP/1.1 200 Connection Established\r\n\r\n"
 MAX_HEADER_BYTES = 65536
-
-
-async def docker_gateway(network: str = "bridge") -> str:
-    """The address a container uses to reach the host, where the proxy listens."""
-
-    def lookup() -> str:
-        client = docker.from_env()
-        try:
-            details = client.networks.get(network).attrs
-            config = details.get("IPAM", {}).get("Config") or []
-            if config and config[0].get("Gateway"):
-                return str(config[0]["Gateway"])
-            return "172.17.0.1"
-        finally:
-            client.close()
-
-    return await asyncio.to_thread(lookup)
 
 
 def normalise(host: str, port: int | None) -> str:

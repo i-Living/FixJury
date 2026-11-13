@@ -125,7 +125,9 @@ def test_the_proxy_environment_points_every_variable_at_the_proxy() -> None:
 
     for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
         assert environment[key] == "http://172.17.0.1:1234"
-    assert "localhost" in environment["NO_PROXY"]
+    # No exception list: on a network with no route out, excluding localhost only
+    # bypasses the proxy for endpoints the platform hosts itself.
+    assert environment["NO_PROXY"] == ""
 
 
 def test_a_harness_without_an_image_is_refused() -> None:

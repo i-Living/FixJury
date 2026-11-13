@@ -48,6 +48,10 @@ class SandboxSpec:
     # preparation container only, which installs dependencies and executes no
     # agent-authored code.
     network: bool = False
+    # A named network wins over `network`. An agent harness gets its own internal
+    # bridge, where the only reachable host is the platform's egress proxy, so
+    # clearing `HTTP_PROXY` in the container leads nowhere.
+    network_name: str = ""
     # Running as the invoking user keeps the workspace bind writable while the
     # root filesystem stays read-only; capabilities are dropped, so root inside
     # could not write to a home directory owned by another uid anyway.
@@ -90,7 +94,7 @@ def _create_container(client: docker.DockerClient, spec: SandboxSpec) -> Contain
         command=KEEPALIVE_COMMAND,
         working_dir=spec.workdir,
         user=spec.user,
-        network_mode="bridge" if spec.network else "none",
+        network_mode=spec.network_name or ("bridge" if spec.network else "none"),
         read_only=True,
         tmpfs={"/tmp": f"rw,noexec,nosuid,size={spec.tmpfs_mb}m"},  # noqa: S108 - inside the container
         volumes={str(spec.workspace): {"bind": spec.workdir, "mode": "rw"}},
