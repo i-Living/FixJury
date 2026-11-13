@@ -32,6 +32,7 @@ uv run ruff format .                      # format
 uv run mypy src                           # types
 docker compose up -d                      # postgres + redis
 docker build -t fixjury-mini:2.4.6 dockerfiles/mini   # the mini harness image
+# then set FIXJURY_MINI_IMAGE=fixjury-mini:2.4.6 and FIXJURY_MINI_VERSION=2.4.6 in .env
 uv run alembic upgrade head               # migrations
 uv run fixjury tasks validate benchmarks  # corpus check
 uv run fixjury run --task T-001 --agent baseline

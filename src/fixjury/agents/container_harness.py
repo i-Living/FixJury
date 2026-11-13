@@ -172,9 +172,11 @@ class ContainerHarnessAdapter:
                 diff_sha256="",
                 declared_success=False,
                 unable_reason=f"UNREADABLE_DIFF: {exc}",
-                tokens_in=0,
-                tokens_out=0,
-                steps=0,
+                # The run happened even if the patch cannot be transported: what it
+                # consumed stays measured, or rejected attempts look free.
+                tokens_in=trail.tokens_in if trail else 0,
+                tokens_out=trail.tokens_out if trail else 0,
+                steps=trail.steps if trail else 0,
                 sandbox_seconds=lifetime,
                 summary="the harness produced a diff the platform cannot read",
             )
