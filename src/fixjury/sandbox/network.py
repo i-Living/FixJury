@@ -27,7 +27,7 @@ import logging
 import os
 import socket
 import threading
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -164,46 +164,66 @@ def is_stale(
     return age_seconds(attrs, now) >= older_than_s
 
 
-def _process_start_time(pid: int) -> str:
-    """Field 22 of /proc/<pid>/stat: the process start, which survives pid reuse."""
+def _process_start_time(pid: int) -> tuple[bool, str]:
+    """Field 22 of /proc/<pid>/stat, the start that survives pid reuse.
 
+    Returns ``(readable, start)``. "No such process" and "cannot look" are different
+    answers, and only the first one is evidence that the owner is gone: a `hidepid`
+    mount makes a live process look absent if you collapse the two.
+    """
+
+    if not Path("/proc").is_dir():
+        return False, ""
     try:
-        raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        return True, ""
     except OSError:
-        return ""
+        return False, ""
     fields = raw.rsplit(")", 1)[-1].split()
     # After the command name, field 3 is state; start time is field 22 overall.
-    return fields[19] if len(fields) > 19 else ""
+    return True, fields[19] if len(fields) > 19 else ""
 
 
 def owner_value(pid: int | None = None) -> str:
     """``host:pid:start`` for the process creating the network."""
 
     process = os.getpid() if pid is None else pid
-    return f"{socket.gethostname()}:{process}:{_process_start_time(process)}"
+    return f"{socket.gethostname()}:{process}:{_process_start_time(process)[1]}"
 
 
-def is_owner_alive(value: str) -> bool:
-    """Is the process named in an owner label still running, and the same one?
+StartReader = Callable[[int], tuple[bool, str]]
 
-    A reused pid gives a different start time, which is the whole point of storing
-    it: without that, a crash followed by an unrelated process taking the pid would
-    make a dead owner look alive forever.
+
+def owner_state(value: str, read_start: StartReader = _process_start_time) -> bool | None:
+    """Is the labeled process alive, dead, or impossible to tell from here?
+
+    ``True`` alive, ``False`` dead, ``None`` unknown — another host, an unreadable
+    process table, or a label nobody can parse. Unknown is not death: treating it as
+    death would force-remove a running run's containers whenever `/proc` is hidden.
     """
 
     host, _, rest = value.partition(":")
     if host != socket.gethostname():
-        return False
+        return None
     raw_pid, _, started = rest.partition(":")
     if not raw_pid.isdigit():
+        return None
+    readable, actual = read_start(int(raw_pid))
+    if not readable:
+        return None
+    if not actual:
         return False
     if not started:
-        return Path(f"/proc/{raw_pid}").exists()
-    return _process_start_time(int(raw_pid)) == started
+        return True
+    return actual == started
 
 
 def is_abandoned(
-    attrs: dict[str, object], now: datetime | None = None, older_than_s: int = STALE_AFTER_S
+    attrs: dict[str, object],
+    now: datetime | None = None,
+    older_than_s: int = STALE_AFTER_S,
+    read_start: StartReader = _process_start_time,
 ) -> bool:
     """Can this network be removed without pulling it from under a live run?
 
@@ -215,10 +235,11 @@ def is_abandoned(
 
     labels = attrs.get("Labels")
     owner = labels.get(OWNER_LABEL) if isinstance(labels, dict) else None
-    if isinstance(owner, str) and owner.partition(":")[0] == socket.gethostname():
-        # A dead process on this host is proof: it cannot attach a container later,
-        # so age does not have to be waited out.
-        return not is_owner_alive(owner)
+    state = owner_state(owner, read_start) if isinstance(owner, str) else None
+    if state is not None:
+        # Proof either way: a live process keeps its network, and a dead one cannot
+        # attach a container later, so age does not have to be waited out.
+        return not state
     return is_stale(attrs, older_than_s, now)
 
 
@@ -237,7 +258,7 @@ async def reap_networks(older_than_s: int = STALE_AFTER_S) -> int:
         try:
             removed = 0
             for network in client.networks.list(filters={"label": NETWORK_LABEL}):
-                if not is_abandoned(network.attrs, now):
+                if not is_abandoned(network.attrs, now, older_than_s):
                     continue
                 name = network.name or ""
                 if not name:
@@ -268,9 +289,9 @@ __all__ = [
     "RunNetwork",
     "age_seconds",
     "is_abandoned",
-    "is_owner_alive",
     "is_stale",
     "open_run_network",
+    "owner_state",
     "owner_value",
     "reap_networks",
 ]
