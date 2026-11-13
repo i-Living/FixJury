@@ -7,6 +7,7 @@ from typing import Annotated
 
 import typer
 import uvicorn
+from docker.errors import DockerException
 
 from fixjury import __version__, queue
 from fixjury.agents.registry import UnknownAgentError, build_adapter
@@ -25,6 +26,7 @@ from fixjury.report.markdown import render_agent_table, render_report
 from fixjury.review.app import create_app
 from fixjury.review.pack import pack_batches
 from fixjury.run import RunError, ensure_task, run_task
+from fixjury.sandbox.network import reap_networks
 from fixjury.tasks.cli import app as tasks_app
 from fixjury.tasks.loader import read_task, task_path
 from fixjury.verify.runner import VerificationError
@@ -33,6 +35,18 @@ from fixjury.worker import redis_client, work_once
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 app.add_typer(tasks_app, name="tasks")
+
+
+async def _reap_stale_networks() -> None:
+    """Remove run networks a crashed process left behind, and never fail the command."""
+
+    try:
+        reaped = await reap_networks()
+    except (DockerException, OSError) as exc:
+        typer.echo(f"warning: could not reap stale run networks: {exc}", err=True)
+        return
+    if reaped:
+        typer.echo(f"reaped {reaped} stale run network(s)")
 
 
 @app.callback()
@@ -72,6 +86,7 @@ def run(
 
     async def go() -> Run:
         engine = make_engine()
+        await _reap_stale_networks()
         try:
             async with session_scope(make_session_maker(engine)) as session:
                 return await run_task(
@@ -229,6 +244,7 @@ def worker(
     async def go() -> None:
         engine = make_engine()
         client = redis_client()
+        await _reap_stale_networks()
         try:
             while True:
                 async with session_scope(make_session_maker(engine)) as session:
@@ -434,6 +450,7 @@ def bench(
         engine = make_engine()
         client = redis_client()
         maker = make_session_maker(engine)
+        await _reap_stale_networks()
         try:
             recovered = await queue.resume(client)
             if recovered:

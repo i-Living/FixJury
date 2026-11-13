@@ -5,8 +5,9 @@ pinned harness inside a container, hands it the task text, and captures the diff
 from the workspace afterwards — the same rule as for the baseline: the agent's
 own patch file is never trusted, the platform's ``git diff`` is.
 
-Egress is an allowlisting proxy on the docker bridge address (invariant 7): the
-harness can reach the model endpoint and nothing else.
+Egress is an allowlisting proxy on the gateway of a per-run internal network
+(invariant 7): the container has no route out, so the harness can reach the model
+endpoint and nothing else — not by unsetting a variable.
 """
 
 from __future__ import annotations
@@ -27,7 +28,8 @@ from fixjury.agents.base import AgentResult, LlmConfig, RunRequest
 from fixjury.agents.mini import MiniRun, read_run
 from fixjury.sandbox.container import SandboxSpec, open_sandbox
 from fixjury.sandbox.diff import UnreadableDiff, capture_diff
-from fixjury.sandbox.proxy import AllowlistProxy, docker_gateway
+from fixjury.sandbox.network import open_run_network
+from fixjury.sandbox.proxy import AllowlistProxy
 from fixjury.sandbox.tools import exec_command
 
 LOGGER = logging.getLogger(__name__)
@@ -81,14 +83,33 @@ def llm_target(llm: LlmConfig | None) -> str | None:
     return f"{split.hostname.lower()}:{port}"
 
 
+def exposes_secret(diff: str, key: str) -> bool:
+    """Did the agent put the provider key into the patch we are about to store?
+
+    The key reaches the sandbox because the harness needs it, so a run can copy it
+    into the workspace and the diff would carry it into the database, the report
+    and the review. Nothing outside the run may see it.
+    """
+
+    return bool(key) and key in diff
+
+
 def proxy_environment(proxy_url: str) -> dict[str, str]:
+    """Every egress variable points at the proxy, and none of them is an exception.
+
+    An empty ``NO_PROXY`` is deliberate. Excluding localhost would only make sense
+    if the sandbox had something local worth reaching, and it does not; worse, it
+    silently bypasses the proxy whenever the model endpoint is self-hosted on the
+    host's loopback, which turns a working run into a connection error.
+    """
+
     return {
         "HTTP_PROXY": proxy_url,
         "HTTPS_PROXY": proxy_url,
         "http_proxy": proxy_url,
         "https_proxy": proxy_url,
-        "NO_PROXY": "localhost,127.0.0.1",
-        "no_proxy": "localhost,127.0.0.1",
+        "NO_PROXY": "",
+        "no_proxy": "",
     }
 
 
@@ -126,31 +147,34 @@ class ContainerHarnessAdapter:
 
         target = llm_target(request.llm)
         proxy = AllowlistProxy(allowed={target} if target else set())
-        gateway = await docker_gateway()
-        proxy.host = gateway
-        await proxy.start()
-        environment = proxy_environment(proxy.url)
 
         started = time.monotonic()
-        try:
-            sandbox_spec = SandboxSpec(
-                image=self.spec.image,
-                workspace=workspace,
-                network=True,
-                timeout_s=self.spec.timeout_s,
-            )
-            async with open_sandbox(sandbox_spec) as sandbox:
-                result = await exec_command(
-                    sandbox,
-                    list(self.spec.command),
-                    timeout_s=float(self.spec.timeout_s),
-                    workdir="/workspace",
-                    env={**environment, **dict(self.spec.env)},
+        # The container runs on a network with no route out, so the proxy is not a
+        # suggestion in the environment but the only reachable peer: clearing
+        # HTTP_PROXY in the sandbox no longer reaches the internet.
+        async with open_run_network() as network:
+            proxy.host = network.gateway
+            await proxy.start()
+            environment = proxy_environment(proxy.url)
+            try:
+                sandbox_spec = SandboxSpec(
+                    image=self.spec.image,
+                    workspace=workspace,
+                    network_name=network.name,
+                    timeout_s=self.spec.timeout_s,
                 )
-            exit_code = result.exit_code
-            output = result.output
-        finally:
-            await proxy.stop()
+                async with open_sandbox(sandbox_spec) as sandbox:
+                    result = await exec_command(
+                        sandbox,
+                        list(self.spec.command),
+                        timeout_s=float(self.spec.timeout_s),
+                        workdir="/workspace",
+                        env={**environment, **dict(self.spec.env)},
+                    )
+                exit_code = result.exit_code
+                output = result.output
+            finally:
+                await proxy.stop()
         lifetime = Decimal(str(round(time.monotonic() - started, 2)))
 
         # mini's trajectory is read before cleanup: it carries the token counts and
@@ -184,6 +208,22 @@ class ContainerHarnessAdapter:
                 steps=trail.steps if trail else 0,
                 sandbox_seconds=lifetime,
                 summary="the harness produced a diff the platform cannot read",
+            )
+
+        key = request.llm.api_key if request.llm else ""
+        if exposes_secret(captured.diff, key):
+            # The patch is dropped rather than stored: keeping it would publish the
+            # key in the database, the report and every review page.
+            return AgentResult(
+                diff="",
+                diff_sha256="",
+                declared_success=False,
+                unable_reason="KEY_IN_DIFF: the patch carried the provider key and was dropped",
+                tokens_in=trail.tokens_in if trail else 0,
+                tokens_out=trail.tokens_out if trail else 0,
+                steps=trail.steps if trail else 0,
+                sandbox_seconds=lifetime,
+                summary="the harness wrote the provider key into the patch",
             )
 
         declared, unable_reason = outcome(

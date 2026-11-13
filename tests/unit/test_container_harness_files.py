@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from fixjury.agents.container_harness import (
+    exposes_secret,
     restore_workspace_entry,
     stash_workspace_entry,
     write_workspace_file,
@@ -94,6 +95,20 @@ def test_an_existing_regular_file_is_replaced_and_comes_back(tmp_path: Path) -> 
 
     restore_workspace_entry(workspace, "TASK.md", stash)
     assert (workspace / "TASK.md").read_text() == "tracked content"
+
+
+def test_a_patch_that_carries_the_key_is_detected() -> None:
+    """The key is in the sandbox because the harness needs it; the patch is not a place for it."""
+
+    assert exposes_secret('+OPENAI_API_KEY = "sk-live-123"\n', "sk-live-123") is True
+
+
+def test_a_patch_without_the_key_is_kept() -> None:
+    assert exposes_secret("--- a/calc.py\n+++ b/calc.py\n", "sk-live-123") is False
+
+
+def test_no_key_means_nothing_to_leak() -> None:
+    assert exposes_secret("anything at all", "") is False
 
 
 def test_writing_refuses_a_path_that_is_already_taken(tmp_path: Path) -> None:

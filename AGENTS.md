@@ -73,7 +73,7 @@ src/fixjury/telemetry.py   OTel spans; the trace id is stored on every run
 src/fixjury/tasks/         task.yaml schema, loader, freeze and validate
 src/fixjury/spec/          RepairSpec generation and rendering
 src/fixjury/agents/        AgentAdapter protocol + baseline + mini + container harness
-src/fixjury/sandbox/       container lifecycle, tool API, diff capture, egress proxy
+src/fixjury/sandbox/       container lifecycle, per-run network, tool API, diff capture, egress proxy
 src/fixjury/verify/        check runner, held-out tests, policy, verdict assembly
 src/fixjury/review/        blind batching, rubric, review page (app.py + templates/)
 src/fixjury/metrics/       metric definitions (compute.py), snapshots (service.py), cost
@@ -99,7 +99,7 @@ These are load-bearing. Breaking one silently invalidates published numbers.
 4. **Review is blind.** The reviewer sees task, spec, patch and check results; agent and model fields are stripped. Blindness is auditable through `review_batches`, so shuffle order is stored, not regenerated.
 5. **Metrics are computed once**, in `src/fixjury/metrics/`, from `runs` + `verdicts` + `rejections`, and persisted to `metric_snapshots` with `config_hash` and `pricing_version`. The report and the UI read snapshots. No metric arithmetic in SQL strings, notebooks, the dashboard or a human's head.
 6. **Adapters are stateless.** `AgentAdapter` may not write to the database, read global config or share objects between runs. Everything it needs arrives in the run spec.
-7. **Sandbox has no network and no docker socket.** The baseline agent calls the model from the platform process while tools execute inside the container. Third-party agents run inside the container with an egress proxy that allowlists one LLM endpoint.
+7. **Sandbox has no network and no docker socket.** The baseline agent calls the model from the platform process while tools execute inside the container. Third-party agents run inside the container on a per-run Docker network created with `internal=True`, so the container has no route out at all; the egress proxy binds the gateway of that network and allowlists one LLM endpoint. `HTTP_PROXY` is how the harness finds the proxy, never what keeps it in: a command that unsets the variable reaches nothing. The provider key does stay in the sandbox — the endpoint is HTTPS, and injecting the header at the proxy would need TLS interception — so the credential boundary is the network: there is nowhere to send the key except the allowlisted endpoint.
 8. **Cost has two bases, and both are labelled.** Models run on a flat opencode-go subscription, so there is no per-run invoice: report `list_price` (tokens × pinned price + sandbox seconds × pinned rate) as a reference and `amortized` (share of the subscription over the run window) as actual money. `tokens_per_accepted_fix` is the primary comparable metric. Prices live in config with a `pricing_version`; costs across different versions are not comparable and must be labelled.
 9. **Frozen means frozen.** Editing `benchmarks/tasks/*/task.yaml` after any run exists invalidates the comparison. Add a new task version instead.
 10. **No auto-merge.** FixJury never pushes to a target repo, never opens a PR against a third-party repository.
@@ -147,6 +147,8 @@ These are load-bearing. Breaking one silently invalidates published numbers.
 - **Containers leak.** `finally: container.remove(force=True)`, and the bench runner reaps leftover containers at start.
 - **opencode-go needs `x-opencode-session`.** The Zen Go endpoint rejects requests without it; every adapter that talks to the provider must send the header, otherwise runs fail as `infra_failed` for no visible reason.
 - **Never mount the platform repo into a sandbox.** The agent gets `target_repo@base_commit` only; mounting FixJury would hand it `benchmarks/heldout` and quietly destroy the benchmark.
+- **The run network gateway is a host address.** `internal=True` blocks routes out, not the gateway: a platform service bound to `0.0.0.0` would be reachable from the sandbox. The egress proxy binds that gateway address and every other platform service belongs on loopback. Docker Engine must be 26.0.0 or newer (25.0.5, 23.0.11): older engines forwarded DNS from internal networks to a host resolver, which a container could encode data in.
+- **Proxy variables are not isolation.** `HTTP_PROXY` inside a container is a suggestion: on a bridge network a command unsets it and dials out. The allowlist only holds if the container has no other route — a per-run `internal=True` network whose only reachable peer is the gateway where the proxy listens. `NO_PROXY` must stay empty: an exception for localhost silently bypasses the proxy for a self-hosted endpoint.
 - **Check commands run in the repo root** of the task; monorepos and pytest config resolution break silently otherwise.
 - **Flaky tasks poison acceptance rates.** Run a no-op baseline (empty diff) against the base commit before the benchmark and drop tasks that fail their own tests.
 - **Never name a top-level directory after a package you import.** A `docker/` folder at the repo root
