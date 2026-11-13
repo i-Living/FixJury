@@ -126,11 +126,13 @@ def _read_bounded(path: Path) -> bytes | None:
     The trajectory is written by the agent, inside a container, and read here with
     the worker's own privileges. A symlink to ``/dev/zero`` or to a file on the host
     must be refused, not followed, and a file whose reported size lies must not be
-    read past the cap.
+    read past the cap. ``O_NONBLOCK`` matters as much as ``O_NOFOLLOW``: opening a
+    FIFO read-only waits for a writer, so the size check would never get a turn and
+    the agent could park the worker.
     """
 
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError as exc:
         LOGGER.warning("mini trajectory at %s is unreadable: %s", path, exc)
         return None

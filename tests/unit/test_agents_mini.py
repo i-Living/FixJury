@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -176,6 +177,15 @@ def test_a_trajectory_that_is_not_a_regular_file_is_refused(tmp_path: Path) -> N
     directory.mkdir()
 
     assert read_run(directory) is None
+
+
+def test_a_fifo_is_refused_without_waiting_for_a_writer(tmp_path: Path) -> None:
+    """A FIFO would block the open, so the size check would never run and the worker would park."""
+
+    path = tmp_path / "traj.json"
+    os.mkfifo(path)
+
+    assert read_run(path) is None
 
 
 def test_a_trajectory_over_the_cap_is_refused_without_reading_it(tmp_path: Path) -> None:

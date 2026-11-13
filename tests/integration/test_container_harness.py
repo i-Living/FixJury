@@ -206,6 +206,41 @@ def test_a_harness_that_stopped_at_its_limit_did_not_declare_success(workspace: 
     assert result.unable_reason == "harness stopped with status LimitsExceeded"
 
 
+def test_platform_file_names_can_already_exist_in_the_repository(workspace: Path) -> None:
+    """A repository may track `TASK.md/` or a file named like the trajectory.
+
+    The platform stashes them, runs, restores, and the patch shows only what the
+    agent changed — no deletions invented by FixJury.
+    """
+
+    (workspace / "TASK.md").mkdir()
+    (workspace / "TASK.md" / "notes.txt").write_text("repository content\n", encoding="utf-8")
+    (workspace / "fixjury-trajectory.json").write_text('{"tracked": true}\n', encoding="utf-8")
+    git(workspace, "add", ".")
+    git(workspace, "commit", "--quiet", "-m", "tracked names collide with platform files")
+    adapter = ContainerHarnessAdapter(
+        HarnessSpec(
+            name="scripted",
+            version="1",
+            image=IMAGE,
+            command=("sh", "-c", "printf 'VALUE = 2\\n' > src/module.py"),
+            trajectory_file="fixjury-trajectory.json",
+        )
+    )
+
+    result = asyncio.run(adapter.run(request_for(workspace)))
+
+    assert "VALUE = 2" in result.diff
+    assert "TASK.md" not in result.diff
+    assert "fixjury-trajectory" not in result.diff
+    assert (workspace / "TASK.md" / "notes.txt").read_text(
+        encoding="utf-8"
+    ) == "repository content\n"
+    assert (workspace / "fixjury-trajectory.json").read_text(
+        encoding="utf-8"
+    ) == '{"tracked": true}\n'
+
+
 def test_an_unconfigured_harness_is_refused(workspace: Path) -> None:
     from fixjury.agents.container_harness import HarnessError
 

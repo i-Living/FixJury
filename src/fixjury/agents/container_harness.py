@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 from fixjury.agents.base import AgentResult, LlmConfig, RunRequest
 from fixjury.agents.mini import MiniRun, read_run
@@ -108,6 +109,14 @@ class ContainerHarnessAdapter:
     async def run(self, request: RunRequest) -> AgentResult:
         self.spec.validate()
         workspace = request.workspace
+        # A repository may already track any of these names, as a file, a directory
+        # or a symlink. Stash first so the platform neither writes through a symlink
+        # nor deletes tracked content, and restore before the diff is captured.
+        stashes = {
+            name: stash_workspace_entry(workspace, name)
+            for name in (TASK_FILENAME, self.spec.config_file, self.spec.trajectory_file)
+            if name
+        }
         write_workspace_file(workspace, TASK_FILENAME, request.spec)
         write_config = self.spec.config_text
         if self.spec.config_file and write_config is not None:
@@ -154,15 +163,11 @@ class ContainerHarnessAdapter:
             LOGGER.warning("%s asks for a success status but has no trajectory", self.spec.name)
 
         # Files we wrote or the harness wrote for its own bookkeeping are not the
-        # agent's change: remove them before the diff is captured, or every
-        # harness run would ship the prompt, the key and the log as a patch.
-        for leftover in (
-            TASK_FILENAME,
-            self.spec.config_file,
-            self.spec.trajectory_file,
-        ):
-            if leftover:
-                (workspace / leftover).unlink(missing_ok=True)
+        # agent's change: remove them before the diff is captured, or every harness
+        # run would ship the prompt, the key and the log as a patch. Restoring what
+        # the repository tracked keeps the platform's deletions out of the patch too.
+        for name, stash in stashes.items():
+            restore_workspace_entry(workspace, name, stash)
 
         try:
             captured = capture_diff(workspace)
@@ -198,26 +203,52 @@ class ContainerHarnessAdapter:
         )
 
 
-def write_workspace_file(workspace: Path, name: str, text: str) -> None:
-    """Write a platform file into the workspace without following a symlink.
+def stash_workspace_entry(workspace: Path, name: str) -> str:
+    """Move whatever occupies a platform path aside, returning its stash name.
 
-    The workspace is a checkout of somebody else's repository at ``base_commit``, so
-    the path we are about to write may already exist as a symlink that repository
-    committed. ``write_text`` would follow it and write through to whatever it
-    points at, with the worker's privileges; ``O_NOFOLLOW`` refuses, and marking the
-    file private keeps the API key off every other account on the host.
+    The workspace is a checkout of somebody else's repository, so ``TASK.md``,
+    ``fixjury-mini.yaml`` and the trajectory name can already exist — as a file, a
+    directory or a symlink. Renaming is the only handling that neither writes
+    through a symlink nor deletes tracked content: the entry comes back untouched
+    before the diff is captured, so the patch never claims the platform deleted it.
+
+    Returns ``""`` when the path was free.
     """
 
     target = workspace / name
-    if target.is_symlink() or target.is_file():
-        target.unlink()
-    elif target.is_dir():
-        shutil.rmtree(target)
+    if not (target.is_symlink() or target.exists()):
+        return ""
+    stash = f".fixjury-stash-{uuid4().hex}"
+    os.rename(target, workspace / stash)
+    return stash
+
+
+def write_workspace_file(workspace: Path, name: str, text: str) -> None:
+    """Create a platform file privately and without following a symlink.
+
+    ``O_EXCL|O_NOFOLLOW`` refuses a path that reappeared as a symlink between the
+    stash and this call, and mode ``0600`` keeps the API key off every other
+    account on the host.
+    """
+
+    target = workspace / name
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     try:
         os.write(fd, text.encode("utf-8"))
     finally:
         os.close(fd)
+
+
+def restore_workspace_entry(workspace: Path, name: str, stash: str) -> None:
+    """Remove the platform file and put back what was there before the run."""
+
+    target = workspace / name
+    if target.is_dir() and not target.is_symlink():
+        shutil.rmtree(target)
+    else:
+        target.unlink(missing_ok=True)
+    if stash:
+        os.rename(workspace / stash, target)
 
 
 def workspace_for_run(prefix: str = "fixjury-harness-") -> Path:
@@ -255,6 +286,8 @@ __all__ = [
     "llm_target",
     "outcome",
     "proxy_environment",
+    "restore_workspace_entry",
+    "stash_workspace_entry",
     "workspace_for_run",
     "write_workspace_file",
 ]

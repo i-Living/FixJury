@@ -4,15 +4,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fixjury.agents.container_harness import write_workspace_file
+import pytest
+
+from fixjury.agents.container_harness import (
+    restore_workspace_entry,
+    stash_workspace_entry,
+    write_workspace_file,
+)
 
 
-def test_a_symlink_committed_by_the_repository_is_replaced_not_followed(tmp_path: Path) -> None:
-    """The workspace is a checkout at base_commit, so it can contain any symlink.
-
-    Writing through one would put the API key wherever the repository pointed, with
-    the worker's privileges.
-    """
+def test_a_symlink_committed_by_the_repository_is_moved_away_not_followed(tmp_path: Path) -> None:
+    """Writing through one would put the API key wherever the repository pointed."""
 
     outside = tmp_path / "outside.txt"
     outside.write_text("untouched")
@@ -20,12 +22,34 @@ def test_a_symlink_committed_by_the_repository_is_replaced_not_followed(tmp_path
     workspace.mkdir()
     (workspace / "fixjury-mini.yaml").symlink_to(outside)
 
+    stash = stash_workspace_entry(workspace, "fixjury-mini.yaml")
     write_workspace_file(workspace, "fixjury-mini.yaml", "step_limit: 3\n")
 
     assert outside.read_text() == "untouched"
-    written = workspace / "fixjury-mini.yaml"
-    assert not written.is_symlink()
-    assert written.read_text() == "step_limit: 3\n"
+    assert (workspace / "fixjury-mini.yaml").read_text() == "step_limit: 3\n"
+
+    restore_workspace_entry(workspace, "fixjury-mini.yaml", stash)
+
+    assert (workspace / "fixjury-mini.yaml").is_symlink(), "the repository's symlink comes back"
+    assert outside.read_text() == "untouched"
+
+
+def test_a_tracked_directory_survives_and_its_files_are_restored(tmp_path: Path) -> None:
+    """A repository may legitimately track `TASK.md/`: the platform must not delete it."""
+
+    workspace = tmp_path / "workspace"
+    tracked = workspace / "TASK.md"
+    tracked.mkdir(parents=True)
+    (tracked / "notes.txt").write_text("repository content")
+
+    stash = stash_workspace_entry(workspace, "TASK.md")
+    write_workspace_file(workspace, "TASK.md", "# Task\n")
+    assert (workspace / "TASK.md").is_file()
+
+    restore_workspace_entry(workspace, "TASK.md", stash)
+
+    assert (workspace / "TASK.md").is_dir()
+    assert (workspace / "TASK.md" / "notes.txt").read_text() == "repository content"
 
 
 def test_a_broken_symlink_does_not_stop_the_write(tmp_path: Path) -> None:
@@ -33,20 +57,19 @@ def test_a_broken_symlink_does_not_stop_the_write(tmp_path: Path) -> None:
     workspace.mkdir()
     (workspace / "TASK.md").symlink_to(tmp_path / "nothing-here")
 
+    stash = stash_workspace_entry(workspace, "TASK.md")
     write_workspace_file(workspace, "TASK.md", "# Task\n")
 
     assert (workspace / "TASK.md").read_text() == "# Task\n"
+    restore_workspace_entry(workspace, "TASK.md", stash)
+    assert (workspace / "TASK.md").is_symlink()
 
 
-def test_a_directory_in_the_way_is_cleared(tmp_path: Path) -> None:
+def test_a_free_path_needs_no_stash(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
-    blocking = workspace / "TASK.md"
-    blocking.mkdir(parents=True)
-    (blocking / "keep.txt").write_text("gone with it")
+    workspace.mkdir()
 
-    write_workspace_file(workspace, "TASK.md", "# Task\n")
-
-    assert (workspace / "TASK.md").is_file()
+    assert stash_workspace_entry(workspace, "TASK.md") == ""
 
 
 def test_the_file_is_private_to_the_worker(tmp_path: Path) -> None:
@@ -60,11 +83,29 @@ def test_the_file_is_private_to_the_worker(tmp_path: Path) -> None:
     assert (workspace / "fixjury-mini.yaml").stat().st_mode & 0o777 == 0o600
 
 
-def test_an_existing_regular_file_is_overwritten(tmp_path: Path) -> None:
+def test_an_existing_regular_file_is_replaced_and_comes_back(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    (workspace / "TASK.md").write_text("stale")
+    (workspace / "TASK.md").write_text("tracked content")
 
+    stash = stash_workspace_entry(workspace, "TASK.md")
     write_workspace_file(workspace, "TASK.md", "fresh")
-
     assert (workspace / "TASK.md").read_text() == "fresh"
+
+    restore_workspace_entry(workspace, "TASK.md", stash)
+    assert (workspace / "TASK.md").read_text() == "tracked content"
+
+
+def test_writing_refuses_a_path_that_is_already_taken(tmp_path: Path) -> None:
+    """O_EXCL|O_NOFOLLOW: nothing sneaks a link in between the stash and the write."""
+
+    outside = tmp_path / "outside.txt"
+    outside.write_text("untouched")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "TASK.md").symlink_to(outside)
+
+    with pytest.raises(FileExistsError):
+        write_workspace_file(workspace, "TASK.md", "# Task\n")
+
+    assert outside.read_text() == "untouched"
