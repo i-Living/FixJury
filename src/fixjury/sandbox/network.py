@@ -26,6 +26,7 @@ import contextlib
 import logging
 import os
 import socket
+import threading
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -48,8 +49,6 @@ DEFAULT_TIMEOUT_S = 60
 # A network older than this cannot belong to a run that is still starting, so a
 # startup reap will not pull it from under a concurrent worker.
 STALE_AFTER_S = 3600
-# Cleanups whose caller gave up; referenced so the loop does not collect them.
-_LINGERING: set[asyncio.Task[None]] = set()
 
 
 class NetworkError(RuntimeError):
@@ -64,7 +63,19 @@ class RunNetwork:
     gateway: str
 
 
-def _create(client: docker.DockerClient, name: str) -> RunNetwork:
+class AbandonedError(NetworkError):
+    """The caller gave up before the network existed, so it was never handed over."""
+
+
+def _create(client: docker.DockerClient, name: str, abandoned: threading.Event) -> RunNetwork:
+    """Create the network, and clean up after ourselves if nobody wants it any more.
+
+    The thread, not the event loop, owns this: a thread cannot be cancelled, so the
+    only place that knows a create has landed is the code right after it. Checking
+    ``abandoned`` there is what makes timeout and cancellation safe — every other
+    arrangement removes a network that does not exist yet and leaks the real one.
+    """
+
     network = client.networks.create(
         name,
         driver="bridge",
@@ -72,6 +83,10 @@ def _create(client: docker.DockerClient, name: str) -> RunNetwork:
         labels={NETWORK_LABEL: "1", OWNER_LABEL: owner_value()},
         check_duplicate=True,
     )
+    if abandoned.is_set():
+        with contextlib.suppress(NotFound, DockerException):
+            network.remove()
+        raise AbandonedError(f"network {name} was abandoned while being created")
     config = (network.attrs.get("IPAM") or {}).get("Config") or []
     gateway = config[0].get("Gateway") if config else None
     if not gateway:
@@ -80,25 +95,22 @@ def _create(client: docker.DockerClient, name: str) -> RunNetwork:
     return RunNetwork(name=name, gateway=str(gateway))
 
 
+def _create_and_release(
+    client: docker.DockerClient, name: str, abandoned: threading.Event
+) -> RunNetwork:
+    """Create the network, and close the client when the caller has already gone."""
+
+    try:
+        return _create(client, name, abandoned)
+    except AbandonedError:
+        with contextlib.suppress(DockerException):
+            client.close()
+        raise
+
+
 def _remove(client: docker.DockerClient, name: str) -> None:
     with contextlib.suppress(NotFound, DockerException):
         client.networks.get(name).remove()
-
-
-async def _abandon(
-    creation: asyncio.Task[RunNetwork], client: docker.DockerClient, name: str
-) -> None:
-    """Remove a network whose creation outlived the caller that gave up on it.
-
-    A thread cannot be cancelled, so the only correct cleanup waits for the create
-    to land and then removes what it made: a removal attempted before the thread
-    finishes finds nothing and leaks the network.
-    """
-
-    with contextlib.suppress(BaseException):
-        await creation
-    await asyncio.to_thread(_remove, client, name)
-    await asyncio.to_thread(client.close)
 
 
 @contextlib.asynccontextmanager
@@ -107,16 +119,17 @@ async def open_run_network(prefix: str = PREFIX) -> AsyncIterator[RunNetwork]:
 
     name = f"{prefix}{uuid4().hex[:12]}"
     client = await asyncio.to_thread(docker.from_env)
-    creation = asyncio.create_task(asyncio.to_thread(_create, client, name))
+    abandoned = threading.Event()
+    creation = asyncio.create_task(asyncio.to_thread(_create_and_release, client, name, abandoned))
     try:
         network = await asyncio.wait_for(asyncio.shield(creation), timeout=DEFAULT_TIMEOUT_S)
-    except asyncio.CancelledError:
-        lingering = asyncio.create_task(_abandon(creation, client, name))
-        _LINGERING.add(lingering)
-        lingering.add_done_callback(_LINGERING.discard)
+    except (asyncio.CancelledError, TimeoutError):
+        # Raising the flag is the whole cleanup: the creating thread checks it after
+        # the network exists and removes what it made. Waiting here would be a lie —
+        # the thread outlives this coroutine and no event-loop state survives with it.
+        abandoned.set()
         raise
-    except (DockerException, TimeoutError) as exc:
-        await _abandon(creation, client, name)
+    except DockerException as exc:
         raise NetworkError(f"cannot create the run network: {exc}") from exc
 
     LOGGER.info("run network %s, host reachable at %s", network.name, network.gateway)

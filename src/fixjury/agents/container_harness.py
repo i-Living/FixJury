@@ -83,6 +83,17 @@ def llm_target(llm: LlmConfig | None) -> str | None:
     return f"{split.hostname.lower()}:{port}"
 
 
+def exposes_secret(diff: str, key: str) -> bool:
+    """Did the agent put the provider key into the patch we are about to store?
+
+    The key reaches the sandbox because the harness needs it, so a run can copy it
+    into the workspace and the diff would carry it into the database, the report
+    and the review. Nothing outside the run may see it.
+    """
+
+    return bool(key) and key in diff
+
+
 def proxy_environment(proxy_url: str) -> dict[str, str]:
     """Every egress variable points at the proxy, and none of them is an exception.
 
@@ -197,6 +208,22 @@ class ContainerHarnessAdapter:
                 steps=trail.steps if trail else 0,
                 sandbox_seconds=lifetime,
                 summary="the harness produced a diff the platform cannot read",
+            )
+
+        key = request.llm.api_key if request.llm else ""
+        if exposes_secret(captured.diff, key):
+            # The patch is dropped rather than stored: keeping it would publish the
+            # key in the database, the report and every review page.
+            return AgentResult(
+                diff="",
+                diff_sha256="",
+                declared_success=False,
+                unable_reason="KEY_IN_DIFF: the patch carried the provider key and was dropped",
+                tokens_in=trail.tokens_in if trail else 0,
+                tokens_out=trail.tokens_out if trail else 0,
+                steps=trail.steps if trail else 0,
+                sandbox_seconds=lifetime,
+                summary="the harness wrote the provider key into the patch",
             )
 
         declared, unable_reason = outcome(
