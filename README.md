@@ -4,7 +4,8 @@
 
 > A patch that compiles, passes CI and opens a pull request is not a fix. FixJury measures how often a fix survives independent verification and human acceptance — and what one accepted fix actually costs.
 
-**Status: all code phases implemented; the benchmark run and human acceptance are next.** Toolchain, schema, CI, the corpus tooling and a **32-task frozen corpus**. A run executes end to end (`fixjury run`, or the whole grid with `fixjury bench`), is verified in a fresh container (`fixjury verify`), carries list-price cost and an OTel trace id, and accepted patches are packed into blind batches for review (`fixjury review pack|serve`) before metrics and the report (`fixjury metrics compute`, `fixjury report`, `fixjury dashboard`). What is missing is not code: it is two pinned harness images, a provider key, and 90 human verdicts. See [`docs/PLAN.md`](docs/PLAN.md).
+**Status: all code phases implemented; the benchmark run and human acceptance are next.** Toolchain, schema, CI, the corpus tooling and a **32-task frozen corpus**. A run executes end to end (`fixjury run`, or the whole grid with `fixjury bench`), is verified in a fresh container (`fixjury verify`), carries list-price cost and an OTel trace id, and accepted patches are packed into blind batches for review (`fixjury review pack|serve`) before metrics and the report (`fixjury metrics compute`, `fixjury report`, `fixjury dashboard` — the
+page is a Next.js static export in `web/`). What is missing is not code: it is two pinned harness images, a provider key, and 90 human verdicts. See [`docs/PLAN.md`](docs/PLAN.md).
 
 ---
 
@@ -128,7 +129,7 @@ The spec is generated from the issue, then **approved by a human at freeze time*
 src/fixjury/     platform: sandbox, adapters, verification, review, metrics, API, CLI
 benchmarks/      frozen task corpus (task.yaml per task) + index
 tests/           unit and integration tests
-web/             read-only metrics page (static export)
+web/             read-only metrics page: Next.js static export, charts via Chart.js
 docs/PLAN.md     specification and phased implementation plan
 idea.md          original concept note (Russian)
 AGENTS.md        engineering rules for agents working in this repo

@@ -20,7 +20,7 @@ from fixjury.metrics.service import (
 )
 from fixjury.models import CostBasis, MetricSnapshot, ReviewBatch, Run, RunStatus, Verdict
 from fixjury.report.charts import render_charts, render_regression_split
-from fixjury.report.dashboard import write_dashboard
+from fixjury.report.dashboard import DashboardError, build_dashboard
 from fixjury.report.markdown import render_agent_table, render_report
 from fixjury.review.app import create_app
 from fixjury.review.pack import pack_batches
@@ -363,7 +363,7 @@ def report(
 
 @app.command()
 def dashboard(
-    out: Annotated[Path, typer.Option("--out", help="Directory for the page.")] = Path(
+    out: Annotated[Path, typer.Option("--out", help="Directory for the static export.")] = Path(
         "docs/dashboard"
     ),
     basis: Annotated[str, typer.Option("--basis", help="Cost basis to label.")] = "list_price",
@@ -371,7 +371,7 @@ def dashboard(
         str | None, typer.Option("--snapshot", help="Build the page from one snapshot id.")
     ] = None,
 ) -> None:
-    """Build the static metrics page from the latest snapshots."""
+    """Build the static metrics page (Next.js export) from the latest snapshots."""
 
     async def go() -> list[MetricSnapshot]:
         engine = make_engine()
@@ -392,9 +392,11 @@ def dashboard(
         raise typer.Exit(code=1)
     snapshots.sort(key=lambda snapshot: snapshot.agent)
     payloads = [snapshot.payload for snapshot in snapshots]
-    chart_paths = render_charts(payloads, out / "charts")
-    chart_paths["regressions"] = render_regression_split(payloads, out / "charts")
-    target = write_dashboard(payloads, out, basis=basis, charts=chart_paths)
+    try:
+        target = build_dashboard(out, payloads, basis=basis)
+    except DashboardError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
     typer.echo(f"wrote {target} from {len(snapshots)} snapshot(s)")
 
 

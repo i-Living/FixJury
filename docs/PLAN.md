@@ -345,7 +345,7 @@ uv run fixjury report --snapshot <id>
 │   ├── api/       app.py routes.py
 │   └── prompts/   spec_generate.md baseline_agent.md
 ├── tests/unit/  tests/integration/
-└── web/         (static export)
+└── web/         Next.js страница метрик (static export)
 ```
 
 ## 11. План по фазам
@@ -451,7 +451,7 @@ uv run fixjury report --snapshot <id>
 
 **7.1 Метрики.** Формулы §3.2, Wilson CI, `metric_snapshots` с `config_hash`.
 **7.2 Отчёт.** `docs/report/README.md` + графики: acceptance по агентам, cost per accepted fix, доля регрессий.
-**7.3 Дашборд.** Статический экспорт из `metric_snapshots` (несколько графиков + таблица), раздача через nginx на VPS, обновление скриптом при новом снапшоте.
+**7.3 Дашборд.** Next.js static export в `web/` из `metric_snapshots` (четыре графика + таблицы), сборка командой `fixjury dashboard`, раздача через nginx на VPS, обновление при новом снапшоте.
 **7.4 Финализация.** README с реальными цифрами, CV-строка, публикация корпуса и сырых прогонов.
 *Проверка:* `fixjury report --snapshot <id>` воспроизводит отчёт; числа в README совпадают со снапшотом.
 

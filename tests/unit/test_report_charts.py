@@ -4,8 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from fixjury.report.charts import render_charts, render_regression_split
-from fixjury.report.dashboard import render_dashboard, write_dashboard
+from fixjury.report.charts import corpus_split, render_charts, render_regression_split
 
 DENOMINATORS: dict[str, object] = {
     "pairs": 10,
@@ -68,57 +67,27 @@ def test_two_agents_fit_on_one_chart(tmp_path: Path) -> None:
     assert charts["acceptance"].exists()
 
 
-def test_the_page_carries_the_numbers_and_the_charts(tmp_path: Path) -> None:
-    charts = render_charts([PAYLOAD], tmp_path)
-    charts["regressions"] = render_regression_split([PAYLOAD], tmp_path)
+def test_the_corpus_split_is_computed_once_and_adds_up_to_one() -> None:
+    split = corpus_split(PAYLOAD)
 
-    html = render_dashboard([PAYLOAD], charts)
-
-    assert "baseline" in html
-    assert "40.0%" in html
-    assert "16.8-68.7%" in html
-    assert "0.4000" in html
-    assert html.count("data:image/png;base64,") == 4
-    assert "unpriced-2026-11" in html
-    assert "infra_failed=2" in html
+    assert split == {"regression_free": 0.3, "with_regression": 0.1, "not_accepted": 0.6}
+    assert sum(split.values()) == pytest.approx(1.0)
 
 
-def test_the_page_says_null_when_a_denominator_was_zero(tmp_path: Path) -> None:
-    payload = dict(PAYLOAD)
-    payload["denominators"] = {**DENOMINATORS, "accepted": 0}
-    payload["metrics"] = {**METRICS, "cost_per_accepted_fix": None}
+def test_a_zero_denominator_gives_an_empty_split_not_a_division_error() -> None:
+    payload = {**PAYLOAD, "denominators": {**DENOMINATORS, "pairs": 0}}
 
-    html = render_dashboard([payload], {})
-
-    assert '<span class="null">null</span>' in html
+    assert set(corpus_split(payload).values()) == {0.0}
 
 
-def test_the_page_is_self_contained(tmp_path: Path) -> None:
-    charts = render_charts([PAYLOAD], tmp_path)
+def test_a_regression_free_count_above_the_accepted_count_is_clamped() -> None:
+    payload = {
+        **PAYLOAD,
+        "denominators": {**DENOMINATORS, "accepted": 2, "regression_free_accepted": 3},
+    }
 
-    html = render_dashboard([PAYLOAD], charts)
+    split = corpus_split(payload)
 
-    assert "<script" not in html
-    assert "http://" not in html and "https://" not in html
-
-
-def test_an_empty_page_is_refused() -> None:
-    with pytest.raises(ValueError, match="at least one snapshot"):
-        render_dashboard([], {})
-
-
-def test_writing_the_page_creates_the_directory(tmp_path: Path) -> None:
-    target = write_dashboard([PAYLOAD], tmp_path / "site")
-
-    assert target.exists()
-    assert target.name == "index.html"
-    assert "baseline" in target.read_text(encoding="utf-8")
-
-
-def test_a_hostile_agent_name_is_escaped(tmp_path: Path) -> None:
-    payload = {**PAYLOAD, "agent": "<script>alert(1)</script>"}
-
-    html = render_dashboard([payload], {})
-
-    assert "<script>alert(1)</script>" not in html
-    assert "&lt;script&gt;" in html
+    assert split["regression_free"] == pytest.approx(0.2)
+    assert split["with_regression"] == 0.0
+    assert sum(split.values()) == pytest.approx(1.0), "a stack that ends past 100% is a lie"

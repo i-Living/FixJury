@@ -174,29 +174,43 @@ def render_charts(payloads: Sequence[Mapping[str, object]], out_dir: Path) -> di
     return charts
 
 
+def corpus_split(payload: Mapping[str, object]) -> dict[str, float]:
+    """How the pairs of one agent end up: shares that add up to 1, or all zeros.
+
+    The one piece of arithmetic the charts need, in one place, so the PNG report and
+    the metrics page cannot disagree about it.
+    """
+
+    numbers = _numbers(payload)
+    pairs = numbers.get("pairs")
+    accepted = numbers.get("accepted")
+    clean = numbers.get("regression_free_accepted")
+    total = float(pairs) if isinstance(pairs, int | float) and pairs else 0.0
+    if total <= 0:
+        return {"regression_free": 0.0, "with_regression": 0.0, "not_accepted": 0.0}
+    # A regression-free acceptance is a subset of an acceptance, and neither can
+    # outrun the pairs: clamp, so a broken snapshot cannot draw a stack past 100%.
+    accepted_count = min(
+        max(float(accepted) if isinstance(accepted, int | float) else 0.0, 0.0), total
+    )
+    clean_count = min(
+        max(float(clean) if isinstance(clean, int | float) else 0.0, 0.0), accepted_count
+    )
+    return {
+        "regression_free": clean_count / total,
+        "with_regression": (accepted_count - clean_count) / total,
+        "not_accepted": (total - accepted_count) / total,
+    }
+
+
 def render_regression_split(payloads: Sequence[Mapping[str, object]], out_dir: Path) -> Path:
     """Stacked bars: accepted and regression-free, accepted but not, not accepted."""
 
     labels = [str(payload.get("agent", "?")) for payload in payloads]
-    top: list[float] = []
-    middle: list[float] = []
-    bottom: list[float] = []
-    for payload in payloads:
-        numbers = _numbers(payload)
-        pairs = numbers.get("pairs")
-        accepted = numbers.get("accepted")
-        clean = numbers.get("regression_free_accepted")
-        total = float(pairs) if isinstance(pairs, int | float) and pairs else 0.0
-        accepted_count = float(accepted) if isinstance(accepted, int | float) else 0.0
-        clean_count = float(clean) if isinstance(clean, int | float) else 0.0
-        if total <= 0:
-            top.append(0.0)
-            middle.append(0.0)
-            bottom.append(0.0)
-            continue
-        top.append(clean_count / total)
-        middle.append(max(0.0, (accepted_count - clean_count) / total))
-        bottom.append(max(0.0, (total - accepted_count) / total))
+    splits = [corpus_split(payload) for payload in payloads]
+    top = [split["regression_free"] for split in splits]
+    middle = [split["with_regression"] for split in splits]
+    bottom = [split["not_accepted"] for split in splits]
 
     figure, axes = plt.subplots(figsize=(6.4, 3.4), dpi=160)
     positions = list(range(len(labels)))
