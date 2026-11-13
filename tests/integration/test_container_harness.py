@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -129,12 +130,86 @@ def test_the_harness_sees_the_proxy_and_nothing_on_the_allowlist(
     assert "http://" in (workspace / "proxy.txt").read_text(encoding="utf-8")
 
 
+def test_a_config_file_and_a_trajectory_stay_out_of_the_patch(workspace: Path) -> None:
+    """What the platform writes for the harness is not the harness's change.
+
+    This is the mini-swe-agent contract without mini: the config carries the
+    endpoint (and therefore the key) and the trajectory carries the tokens. Both
+    are read, both are removed, and neither may appear in the diff that a reviewer
+    sees.
+    """
+
+    trajectory = (
+        '{"trajectory_format": "mini-swe-agent-1.1",'
+        ' "info": {"exit_status": "Submitted", "model_stats": {"api_calls": 3}},'
+        ' "messages": [{"extra": {"response": {"usage":'
+        ' {"prompt_tokens": 7, "completion_tokens": 4}}}}]}'
+    )
+    adapter = ContainerHarnessAdapter(
+        HarnessSpec(
+            name="scripted",
+            version="1",
+            image=IMAGE,
+            command=(
+                "sh",
+                "-c",
+                "grep -q 'step_limit: 7' fixjury-mini.yaml"
+                " && printf 'VALUE = 2\\n' > src/module.py"
+                f" && printf '%s' '{trajectory}' > fixjury-trajectory.json",
+            ),
+            config_file="fixjury-mini.yaml",
+            config_text=lambda llm, max_steps: f"step_limit: {max_steps}\n",
+            trajectory_file="fixjury-trajectory.json",
+            trajectory_success_status="Submitted",
+        )
+    )
+    request = replace(request_for(workspace), max_steps=7)
+
+    result = asyncio.run(adapter.run(request))
+
+    assert result.tokens_in == 7
+    assert result.tokens_out == 4
+    assert result.steps == 3
+    assert result.declared_success is True
+    assert "VALUE = 2" in result.diff
+    for name in ("TASK.md", "fixjury-mini.yaml", "fixjury-trajectory.json"):
+        assert name not in result.diff
+        assert not (workspace / name).exists()
+
+
+def test_a_harness_that_stopped_at_its_limit_did_not_declare_success(workspace: Path) -> None:
+    """Exit code 0 with a diff is not a submission: the trajectory says which it was."""
+
+    trajectory = (
+        '{"trajectory_format": "mini-swe-agent-1.1", "info": {"exit_status": "LimitsExceeded"}}'
+    )
+    adapter = ContainerHarnessAdapter(
+        HarnessSpec(
+            name="scripted",
+            version="1",
+            image=IMAGE,
+            command=(
+                "sh",
+                "-c",
+                f"printf 'VALUE = 2\\n' > src/module.py"
+                f" && printf '%s' '{trajectory}' > fixjury-trajectory.json",
+            ),
+            trajectory_file="fixjury-trajectory.json",
+            trajectory_success_status="Submitted",
+        )
+    )
+
+    result = asyncio.run(adapter.run(request_for(workspace)))
+
+    assert "VALUE = 2" in result.diff
+    assert result.declared_success is False
+    assert result.unable_reason == "harness stopped with status LimitsExceeded"
+
+
 def test_an_unconfigured_harness_is_refused(workspace: Path) -> None:
     from fixjury.agents.container_harness import HarnessError
 
-    adapter = ContainerHarnessAdapter(
-        HarnessSpec(name="swe-agent", version="", image="", command=())
-    )
+    adapter = ContainerHarnessAdapter(HarnessSpec(name="mini", version="", image="", command=()))
 
     with pytest.raises(HarnessError, match="no pinned image"):
         asyncio.run(adapter.run(request_for(workspace)))

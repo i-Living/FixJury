@@ -139,5 +139,5 @@ def test_the_registry_names_the_agents_it_knows() -> None:
 
 
 def test_the_harnesses_are_registered_even_without_an_image() -> None:
-    assert "swe-agent" in known_agents()
+    assert "mini" in known_agents()
     assert "openhands" in known_agents()

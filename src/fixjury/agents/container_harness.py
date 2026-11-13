@@ -14,12 +14,14 @@ from __future__ import annotations
 import logging
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from fixjury.agents.base import AgentResult, LlmConfig, RunRequest
+from fixjury.agents.mini import MiniRun, read_run
 from fixjury.sandbox.container import SandboxSpec, open_sandbox
 from fixjury.sandbox.diff import UnreadableDiff, capture_diff
 from fixjury.sandbox.proxy import AllowlistProxy, docker_gateway
@@ -43,6 +45,15 @@ class HarnessSpec:
     command: tuple[str, ...]
     env: tuple[tuple[str, str], ...] = ()
     timeout_s: int = 1800
+    # A harness that needs its own settings file gets it written into the
+    # workspace before the run and removed before the diff is captured. The text
+    # comes from a function of the run, so a key never has to enter argv.
+    config_file: str = ""
+    config_text: Callable[[LlmConfig | None, int], str] | None = None
+    # A harness that records its own trajectory can report tokens and whether it
+    # submitted; without one every third-party agent claims zero tokens.
+    trajectory_file: str = ""
+    trajectory_success_status: str = ""
 
     def validate(self) -> None:
         if not self.image:
@@ -51,6 +62,8 @@ class HarnessSpec:
             )
         if not self.command:
             raise HarnessError(f"{self.name} has no command to run inside its image")
+        if self.config_file and self.config_text is None:
+            raise HarnessError(f"{self.name} has a config file but no function to write it")
 
 
 def llm_target(llm: LlmConfig | None) -> str | None:
@@ -94,6 +107,11 @@ class ContainerHarnessAdapter:
         self.spec.validate()
         workspace = request.workspace
         (workspace / TASK_FILENAME).write_text(request.spec, encoding="utf-8")
+        write_config = self.spec.config_text
+        if self.spec.config_file and write_config is not None:
+            (workspace / self.spec.config_file).write_text(
+                write_config(request.llm, request.max_steps), encoding="utf-8"
+            )
 
         target = llm_target(request.llm)
         proxy = AllowlistProxy(allowed={target} if target else set())
@@ -124,9 +142,25 @@ class ContainerHarnessAdapter:
             await proxy.stop()
         lifetime = Decimal(str(round(time.monotonic() - started, 2)))
 
-        # The task file is ours, not the agent's change: remove it before the
-        # diff is captured, or every harness run would ship the prompt as a patch.
-        (workspace / TASK_FILENAME).unlink(missing_ok=True)
+        # mini's trajectory is read before cleanup: it carries the token counts and
+        # whether the agent submitted. A missing or broken file is not a failed
+        # run, only a run whose token columns stay zero.
+        trail: MiniRun | None = None
+        if self.spec.trajectory_file:
+            trail = read_run(workspace / self.spec.trajectory_file)
+        elif self.spec.trajectory_success_status:
+            LOGGER.warning("%s asks for a success status but has no trajectory", self.spec.name)
+
+        # Files we wrote or the harness wrote for its own bookkeeping are not the
+        # agent's change: remove them before the diff is captured, or every
+        # harness run would ship the prompt, the key and the log as a patch.
+        for leftover in (
+            TASK_FILENAME,
+            self.spec.config_file,
+            self.spec.trajectory_file,
+        ):
+            if leftover:
+                (workspace / leftover).unlink(missing_ok=True)
 
         try:
             captured = capture_diff(workspace)
@@ -143,14 +177,18 @@ class ContainerHarnessAdapter:
                 summary="the harness produced a diff the platform cannot read",
             )
 
+        declared, unable_reason = outcome(
+            exit_code, captured.is_empty, trail, self.spec.trajectory_success_status
+        )
+
         return AgentResult(
             diff=captured.diff,
             diff_sha256=captured.sha256,
-            declared_success=exit_code == 0 and not captured.is_empty,
-            unable_reason=None if exit_code == 0 else f"harness exited {exit_code}",
-            tokens_in=0,
-            tokens_out=0,
-            steps=0,
+            declared_success=declared,
+            unable_reason=unable_reason,
+            tokens_in=trail.tokens_in if trail else 0,
+            tokens_out=trail.tokens_out if trail else 0,
+            steps=trail.steps if trail else 0,
             sandbox_seconds=lifetime,
             summary=output.strip().splitlines()[-1] if output.strip() else "",
         )
@@ -160,11 +198,36 @@ def workspace_for_run(prefix: str = "fixjury-harness-") -> Path:
     return Path(tempfile.mkdtemp(prefix=prefix))
 
 
+def outcome(
+    exit_code: int,
+    diff_is_empty: bool,
+    trail: MiniRun | None,
+    success_status: str,
+) -> tuple[bool, str | None]:
+    """Did the harness declare success, and if not, what does the run say?
+
+    Exit code zero only means the process ended: a harness that stops at its step
+    limit also exits zero. When the harness records its own status, that status is
+    the declaration of success, and the reason names it instead of hiding behind
+    "exited 0".
+    """
+
+    if exit_code != 0:
+        return False, f"harness exited {exit_code}"
+    declared = not diff_is_empty
+    if success_status:
+        declared = declared and trail is not None and trail.exit_status == success_status
+        if trail is not None and trail.exit_status != success_status:
+            return False, f"harness stopped with status {trail.exit_status or 'unknown'}"
+    return declared, None
+
+
 __all__ = [
     "ContainerHarnessAdapter",
     "HarnessError",
     "HarnessSpec",
     "llm_target",
+    "outcome",
     "proxy_environment",
     "workspace_for_run",
 ]
