@@ -161,4 +161,4 @@ CodeRabbit reviews every pull request. Its configuration is [`.coderabbit.yaml`]
 
 ## Verification
 
-Before declaring a phase complete, run the check chain and the phase verification listed in `docs/PLAN.md` §11. The MVP is done when `docs/PLAN.md` §14 is satisfied: frozen corpus, 96 finished runs, 96 human verdicts, computed metrics, published report, green CI.
+Before declaring a phase complete, run the check chain and the phase verification listed in `docs/PLAN.md` §11. The MVP is done when `docs/PLAN.md` §14 is satisfied: frozen corpus, 96 completed pairs, 96 human verdicts, computed metrics, published report, green CI.

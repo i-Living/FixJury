@@ -144,7 +144,7 @@ AGENTS.md        engineering rules for agents working in this repo
 | 2 | 3 | Sandbox, diff capture, baseline agent, `fixjury run` |
 | 3 | 4 | Verification, held-out suite, policy checks, `fixjury verify` |
 | 4 | 5 | Redis queue, worker, cost, traces — adapters next |
-| 5 | 6 | Bench runner (`fixjury bench`) — the 96-run pass needs harness images and a key |
+| 5 | 6 | Bench runner (`fixjury bench`) — the 96-pair pass needs harness images and a key |
 | 6 | 7 | Blind review page (`fixjury review`) — the verdicts are the owner's |
 | 7 | 8 | Metrics + report (done), static metrics page on the VPS (next) |
 
