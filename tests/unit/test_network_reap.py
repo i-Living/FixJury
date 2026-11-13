@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-import os
 import socket
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import pytest
 
 from fixjury.sandbox.network import (
     OWNER_LABEL,
@@ -67,46 +69,56 @@ def test_an_unparseable_timestamp_is_treated_as_fresh() -> None:
     assert is_stale({"Created": "not a date"}, now=NOW) is False
 
 
-def test_this_process_is_alive_by_its_own_label() -> None:
-    assert owner_state(owner_value()) is True
+def _label(pid: int = 4242, started: str = "777") -> str:
+    return f"{socket.gethostname()}:{pid}:{started}"
+
+
+def test_a_live_process_with_the_recorded_start_is_alive() -> None:
+    assert owner_state(_label(), read_start=lambda pid: (True, "777")) is True
 
 
 def test_a_dead_pid_is_not_alive() -> None:
-    assert owner_state(_dead_owner()) is False
+    assert owner_state(_dead_owner(), read_start=lambda pid: (True, "")) is False
 
 
 def test_a_reused_pid_with_a_different_start_time_is_not_alive() -> None:
     """The start time is stored precisely so a recycled pid cannot look alive."""
 
-    assert owner_state(f"{socket.gethostname()}:{os.getpid()}:0") is False
+    assert owner_state(_label(started="777"), read_start=lambda pid: (True, "888")) is False
 
 
 def test_another_host_is_unknown_rather_than_dead() -> None:
-    assert owner_state(f"some-other-host:{os.getpid()}:1") is None
+    assert owner_state("some-other-host:4242:777") is None
 
 
 def test_a_label_without_a_start_falls_back_to_existence() -> None:
-    assert owner_state(f"{socket.gethostname()}:{os.getpid()}:") is True
+    assert owner_state(_label(started=""), read_start=lambda pid: (True, "777")) is True
 
 
 def test_an_unreadable_process_table_is_unknown_rather_than_dead() -> None:
     """`hidepid` must not turn a live run into a reaped one."""
 
-    unknown = f"{socket.gethostname()}:{os.getpid()}:1"
+    assert owner_state(_label(), read_start=_unreadable) is None
 
-    assert owner_state(unknown, read_start=_unreadable) is None
-
-    fresh = _attrs(timedelta(seconds=5), owner=unknown)
-    old = _attrs(timedelta(hours=5), owner=unknown)
+    fresh = _attrs(timedelta(seconds=5), owner=_label())
+    old = _attrs(timedelta(hours=5), owner=_label())
 
     assert is_abandoned(fresh, now=NOW, read_start=_unreadable) is False
     assert is_abandoned(old, now=NOW, read_start=_unreadable) is True
 
 
+@pytest.mark.skipif(not Path("/proc").is_dir(), reason="this host has no procfs")
+def test_the_real_reader_sees_this_process_as_alive() -> None:
+    """The one test that touches the real process table, kept apart from the rules."""
+
+    assert owner_state(owner_value()) is True
+
+
 def test_a_live_owner_keeps_its_network_however_old_it_is() -> None:
     """An image pull can delay the container for minutes; age is not evidence."""
 
-    assert is_abandoned(_attrs(timedelta(hours=5), owner=owner_value()), now=NOW) is False
+    alive = _attrs(timedelta(hours=5), owner=_label())
+    assert is_abandoned(alive, now=NOW, read_start=lambda pid: (True, "777")) is False
 
 
 def test_a_dead_owner_on_this_host_is_reaped_without_waiting_for_age() -> None:

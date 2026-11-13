@@ -98,14 +98,26 @@ def _create(client: docker.DockerClient, name: str, abandoned: threading.Event) 
 def _create_and_release(
     client: docker.DockerClient, name: str, abandoned: threading.Event
 ) -> RunNetwork:
-    """Create the network, and close the client when the caller has already gone."""
+    """Create the network, closing the client if the creation does not succeed.
+
+    The client changes hands only on success: the context manager closes it after a
+    run, and every failure path closes it here, because nobody else left knows it
+    exists.
+    """
 
     try:
         return _create(client, name, abandoned)
-    except AbandonedError:
+    except BaseException:
         with contextlib.suppress(DockerException):
             client.close()
         raise
+
+
+def _consume(task: asyncio.Task[RunNetwork]) -> None:
+    """Mark a creation result as seen, so an abandoned one does not warn at exit."""
+
+    with contextlib.suppress(BaseException):
+        task.exception()
 
 
 def _remove(client: docker.DockerClient, name: str) -> None:
@@ -128,6 +140,7 @@ async def open_run_network(prefix: str = PREFIX) -> AsyncIterator[RunNetwork]:
         # the network exists and removes what it made. Waiting here would be a lie —
         # the thread outlives this coroutine and no event-loop state survives with it.
         abandoned.set()
+        creation.add_done_callback(_consume)
         raise
     except DockerException as exc:
         raise NetworkError(f"cannot create the run network: {exc}") from exc
