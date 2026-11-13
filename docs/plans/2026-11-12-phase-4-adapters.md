@@ -61,3 +61,10 @@ So the remaining route for SWE-agent is to build our own image from a pinned sou
 (`git clone --depth 1 --branch <tag>` + `pip install -e .`) inside `docker build`, which makes the
 harness version a build argument instead of a registry tag. That is a decision about adding a build
 step to the repo, so it is not taken unasked.
+
+**Settled later: the third-party harness is mini-swe-agent, not SWE-agent.** mini-swe-agent is the
+same team's deliberately minimal agent, ships as a pinned PyPI package and a single bash loop, so it
+needs no docker-in-docker and no bespoke build: `dockerfiles/mini/Dockerfile` is one pinned install.
+SWE-agent stays out of the MVP for the reason above — its runner drives docker itself, and the public
+images are either gated or library-only. Its trajectory is also what lets a container harness report
+tokens at all, without which `tokens_per_accepted_fix` would be zero for every third-party agent.

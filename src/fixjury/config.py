@@ -29,9 +29,9 @@ class Settings(BaseSettings):
 
     # Third-party harnesses: the image and the command are configuration, never
     # guessed. An empty image means "this adapter is not configured yet".
-    swe_agent_image: str = ""
-    swe_agent_command: str = ""
-    swe_agent_version: str = ""
+    mini_image: str = ""
+    mini_command: str = ""
+    mini_version: str = ""
     openhands_image: str = ""
     openhands_command: str = ""
     openhands_version: str = ""

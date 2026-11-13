@@ -31,11 +31,13 @@ uv run ruff check .                       # lint
 uv run ruff format .                      # format
 uv run mypy src                           # types
 docker compose up -d                      # postgres + redis
+docker build -t fixjury-mini:2.4.6 dockerfiles/mini   # the mini harness image
+# then set FIXJURY_MINI_IMAGE=fixjury-mini:2.4.6 and FIXJURY_MINI_VERSION=2.4.6 in .env
 uv run alembic upgrade head               # migrations
 uv run fixjury tasks validate benchmarks  # corpus check
 uv run fixjury run --task T-001 --agent baseline
 uv run fixjury verify --run <id>          # fresh container, policy, held-out
-uv run fixjury bench --agents baseline,swe-agent --verify
+uv run fixjury bench --agents baseline,mini --verify
 uv run fixjury review pack && uv run fixjury review serve
 uv run fixjury metrics compute --agent baseline
 (cd web && npm ci)                        # once, Node 20.9 or newer
@@ -70,7 +72,7 @@ src/fixjury/run.py         run one agent on one task, record it in runs
 src/fixjury/telemetry.py   OTel spans; the trace id is stored on every run
 src/fixjury/tasks/         task.yaml schema, loader, freeze and validate
 src/fixjury/spec/          RepairSpec generation and rendering
-src/fixjury/agents/        AgentAdapter protocol + baseline + container harness
+src/fixjury/agents/        AgentAdapter protocol + baseline + mini + container harness
 src/fixjury/sandbox/       container lifecycle, tool API, diff capture, egress proxy
 src/fixjury/verify/        check runner, held-out tests, policy, verdict assembly
 src/fixjury/review/        blind batching, rubric, review page (app.py + templates/)
@@ -78,6 +80,7 @@ src/fixjury/metrics/       metric definitions (compute.py), snapshots (service.p
 src/fixjury/report/        markdown report, charts, the export the metrics page is built from
 src/fixjury/prompts/       *.md prompt files (English)
 config/pricing.yaml        pinned rates + pricing_version
+dockerfiles/mini/          the mini-swe-agent harness image (one pinned Dockerfile)
 benchmarks/tasks/T-xxx/    task.yaml, public fixtures
 benchmarks/heldout/T-xxx/  held-out tests + reference.patch, mounted only in verification
 web/                       read-only metrics page: Next.js app, static export, charts via Chart.js
@@ -146,6 +149,17 @@ These are load-bearing. Breaking one silently invalidates published numbers.
 - **Never mount the platform repo into a sandbox.** The agent gets `target_repo@base_commit` only; mounting FixJury would hand it `benchmarks/heldout` and quietly destroy the benchmark.
 - **Check commands run in the repo root** of the task; monorepos and pytest config resolution break silently otherwise.
 - **Flaky tasks poison acceptance rates.** Run a no-op baseline (empty diff) against the base commit before the benchmark and drop tasks that fail their own tests.
+- **Never name a top-level directory after a package you import.** A `docker/` folder at the repo root
+  made mypy resolve `import docker` to the Dockerfile directory and report the SDK as missing methods.
+- **mini-swe-agent interviews you on first run.** Without `MSWEA_CONFIGURED=1` it tries to read a
+  model and a key from stdin, which a sandbox does not have, and the run dies as `infra_failed`. The
+  harness sets it, along with `HOME=/tmp`: the root filesystem is read-only and mini writes a last-run
+  copy under `$HOME`.
+- **A step limit is not a failed exit.** mini exits 0 when it stops at `step_limit`; the declaration of
+  success is the `exit_status` in its trajectory (`Submitted`), not the exit code. Reading only the exit
+  code would record every truncated run as a false completion.
+- **Harness tokens come from the trajectory, not from the platform.** A container harness that records
+  no trajectory reports zero tokens, which makes `tokens_per_accepted_fix` a lie rather than a gap.
 - **Tool versions change verdicts.** Pin ruff/mypy/pytest per task and store `tool_versions` on the verdict; an unpinned upgrade silently rewrites history.
 - **Blind review leaks through metadata.** Patch metadata, commit messages, code comments and PR-style formatting can reveal the agent, so packaging strips names and normalizes headers before review.
 - **A zero denominator is not zero cost.** `cost_per_accepted_fix` is `null`, not `0`, when nothing was accepted; the report must show `null`.

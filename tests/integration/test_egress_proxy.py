@@ -129,14 +129,14 @@ def test_the_proxy_environment_points_every_variable_at_the_proxy() -> None:
 
 
 def test_a_harness_without_an_image_is_refused() -> None:
-    spec = HarnessSpec(name="swe-agent", version="1", image="", command=("sweagent", "run"))
+    spec = HarnessSpec(name="mini", version="1", image="", command=("mini",))
 
     with pytest.raises(HarnessError, match="no pinned image"):
         spec.validate()
 
 
 def test_a_harness_without_a_command_is_refused() -> None:
-    spec = HarnessSpec(name="swe-agent", version="1", image="ghcr.io/x/y:1", command=())
+    spec = HarnessSpec(name="mini", version="1", image="ghcr.io/x/y:1", command=())
 
     with pytest.raises(HarnessError, match="no command"):
         spec.validate()

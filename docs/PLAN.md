@@ -45,7 +45,7 @@ FixJury — слой доверия к автономному ремонту к�
 - Целевые репозитории: Python, лицензии MIT / Apache-2.0 / BSD-3-Clause.
 - Источник задач: GitHub issues, зафиксированный `base_commit`.
 - 32 задачи в замороженном корпусе.
-- 3 исполнителя: SWE-agent, OpenHands, собственный минимальный baseline.
+- 3 исполнителя: mini-swe-agent, OpenHands, собственный минимальный baseline.
 - Проверки: pytest, ruff, mypy, policy (границы изменений), held-out тесты.
 - Приёмка: только человек, слепо, по фиксированной рубрике.
 - Прогон: 32 задачи × 3 агента = 96 пар, максимум 2 попытки на пару.
@@ -72,7 +72,7 @@ FixJury — слой доверия к автономному ремонту к�
 | --- | --- |
 | `finished` | Прогон дошёл до конца и оставил непустой дифф. `infra_failed` и `cancelled` не считаются попыткой. |
 | `automated_pass` | `tests_pass ∧ lint_pass ∧ type_pass ∧ policy_pass ∧ (heldout_pass ≠ false)`. |
-| `declared_success` | Агент сам объявил задачу решённой. Для baseline — финальный ответ без маркера `unable`; для SWE-agent/OpenHands — завершение с патчем без явного отказа. Если адаптер не различает — `null`, и метрика считается только по агентам, где сигнал есть. |
+| `declared_success` | Агент сам объявил задачу решённой. Для baseline — финальный ответ без маркера `unable`; для mini — статус `Submitted` в его trajectory (лимит шагов даёт `LimitsExceeded`, и это не объявленный успех); для OpenHands — завершение с патчем без явного отказа. Если адаптер не различает — `null`, и метрика считается только по агентам, где сигнал есть. |
 | `accepted` | Хотя бы одна попытка пары получила `human_verdict = accept`. Попасть к человеку может только патч с `automated_pass = true`. |
 | `regression_free_accepted` | `accepted ∧ heldout_pass = true ∧ нет изменений вне allowed_paths ∧ ни один тестовый файл не удалён и не ослаблен`. Подмножество `accepted`: policy-часть уже отсекается до человека, held-out и проверка ослабления тестов добавляют то, чего автопроверки репозитория не видят. |
 
@@ -175,7 +175,7 @@ FixJury — слой доверия к автономному ремонту к�
 | Corpus loader | валидация и заморозка задач | `src/fixjury/tasks/` |
 | Spec generator | issue → RepairSpec (LLM), рендер YAML | `src/fixjury/spec/` |
 | Sandbox | контейнер на прогон, лимиты, изоляция, tool API | `src/fixjury/sandbox/` |
-| Adapters | SWE-agent, OpenHands, baseline | `src/fixjury/agents/` |
+| Adapters | mini-swe-agent, OpenHands, baseline | `src/fixjury/agents/` |
 | Verification | pytest/ruff/mypy/policy/held-out, сборка вердикта | `src/fixjury/verify/` |
 | Review | слепые батчи, рубрика, таксономия, API | `src/fixjury/review/` |
 | Metrics | формулы, стоимость, снапшоты | `src/fixjury/metrics/` |
@@ -292,7 +292,7 @@ cutoff_assumption: clean
 | БД | PostgreSQL 16, SQLAlchemy 2.0 (async), Alembic |
 | Очередь | Redis 7, собственный воркер |
 | Песочница | Docker (docker-py) |
-| Агенты | SWE-agent, OpenHands, baseline (собственный) |
+| Агенты | mini-swe-agent, OpenHands, baseline (собственный) |
 | Протокол инструментов | MCP для внешних интеграций, внутренний tool API для песочницы |
 | Интеграция | GitHub API (issues, форки), без PR в чужие репозитории |
 | Наблюдаемость | OpenTelemetry (спаны на прогон и шаг) |
@@ -311,7 +311,7 @@ docker compose up -d
 uv run alembic upgrade head
 uv run fixjury tasks validate benchmarks
 uv run fixjury run --task T-001 --agent baseline
-uv run fixjury bench --tasks benchmarks/index.json --agents baseline,swe-agent,openhands
+uv run fixjury bench --agents baseline,mini,openhands
 uv run fixjury report --snapshot <id>
 ```
 
@@ -336,7 +336,7 @@ uv run fixjury report --snapshot <id>
 │   ├── config.py  db.py  models.py  cli.py  queue.py
 │   ├── tasks/     schema.py loader.py freeze.py validate.py
 │   ├── spec/      generator.py render.py
-│   ├── agents/    base.py baseline.py swe_agent.py openhands.py registry.py
+│   ├── agents/    base.py baseline.py mini.py container_harness.py registry.py
 │   ├── sandbox/   docker.py tools.py policy.py
 │   ├── verify/    runner.py checks.py heldout.py
 │   ├── review/    package.py rubric.py taxonomy.py api.py
