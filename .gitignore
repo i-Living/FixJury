@@ -11,3 +11,7 @@ build/
 *.egg-info/
 web/node_modules/
 web/.next/
+web/out/
+web/data/
+*.tsbuildinfo
+docs/dashboard/
