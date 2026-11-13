@@ -5,7 +5,7 @@
 > A patch that compiles, passes CI and opens a pull request is not a fix. FixJury measures how often a fix survives independent verification and human acceptance — and what one accepted fix actually costs.
 
 **Status: all code phases implemented; the benchmark run and human acceptance are next.** Toolchain, schema, CI, the corpus tooling and a **32-task frozen corpus**. A run executes end to end (`fixjury run`, or the whole grid with `fixjury bench`), is verified in a fresh container (`fixjury verify`), carries list-price cost and an OTel trace id, and accepted patches are packed into blind batches for review (`fixjury review pack|serve`) before metrics and the report (`fixjury metrics compute`, `fixjury report`, `fixjury dashboard` — the
-page is a Next.js static export in `web/`). What is missing is not code: it is two pinned harness images, a provider key, and 90 human verdicts. See [`docs/PLAN.md`](docs/PLAN.md).
+page is a Next.js static export in `web/`). What is missing is not code: it is two pinned harness images, a provider key, and 96 human verdicts. See [`docs/PLAN.md`](docs/PLAN.md).
 
 ---
 
@@ -118,7 +118,7 @@ The spec is generated from the issue, then **approved by a human at freeze time*
 | Agents | SWE-agent, OpenHands, own minimal baseline |
 | Checks | pytest, ruff, mypy, scope policy, held-out tests |
 | Acceptance | Human only, blind, fixed rubric |
-| Benchmark size | 90 task–agent pairs (30 tasks × 3 agents), up to 2 attempts per pair |
+| Benchmark size | 96 task–agent pairs (32 tasks × 3 agents), up to 2 attempts per pair |
 | Report | Public benchmark + engineering report |
 
 **Non-goals for the MVP:** another coding agent, a code review bot, a CI replacement, auto-merge, multi-language support, multi-tenant SaaS, a self-improving prompt loop.
@@ -144,7 +144,7 @@ AGENTS.md        engineering rules for agents working in this repo
 | 2 | 3 | Sandbox, diff capture, baseline agent, `fixjury run` |
 | 3 | 4 | Verification, held-out suite, policy checks, `fixjury verify` |
 | 4 | 5 | Redis queue, worker, cost, traces — adapters next |
-| 5 | 6 | Bench runner (`fixjury bench`) — the 90-run pass needs harness images and a key |
+| 5 | 6 | Bench runner (`fixjury bench`) — the 96-pair pass needs harness images and a key |
 | 6 | 7 | Blind review page (`fixjury review`) — the verdicts are the owner's |
 | 7 | 8 | Metrics + report (done), static metrics page on the VPS (next) |
 
