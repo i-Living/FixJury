@@ -119,22 +119,28 @@ async def open_run_network(prefix: str = PREFIX) -> AsyncIterator[RunNetwork]:
         await asyncio.to_thread(client.close)
 
 
-def age_seconds(attrs: dict[str, object]) -> float:
-    """How long ago Docker says this object was created; ``0`` when it does not say."""
+def age_seconds(attrs: dict[str, object], now: datetime | None = None) -> float:
+    """How long ago Docker says this object was created; ``0`` when it does not say.
+
+    ``now`` exists so a test can pin the reference instant instead of reading the
+    wall clock twice, which a clock correction between reads would make flaky.
+    """
 
     created = attrs.get("Created")
     if not isinstance(created, str):
         return 0.0
     with contextlib.suppress(ValueError):
         stamp = datetime.fromisoformat(created.replace("Z", "+00:00"))
-        return (datetime.now(UTC) - stamp).total_seconds()
+        return ((now or datetime.now(UTC)) - stamp).total_seconds()
     return 0.0
 
 
-def is_stale(attrs: dict[str, object], older_than_s: int = STALE_AFTER_S) -> bool:
+def is_stale(
+    attrs: dict[str, object], older_than_s: int = STALE_AFTER_S, now: datetime | None = None
+) -> bool:
     """Is this network old enough that no live run can still be starting on it?"""
 
-    return age_seconds(attrs) >= older_than_s
+    return age_seconds(attrs, now) >= older_than_s
 
 
 async def reap_networks(older_than_s: int = STALE_AFTER_S) -> int:
