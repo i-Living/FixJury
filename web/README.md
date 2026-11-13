@@ -34,7 +34,7 @@ is arithmetic. A zero denominator arrives as `null` and renders as the word `nul
 Everything you normally need goes through the CLI, from the repository root:
 
 ```bash
-cd web && npm ci                  # once, Node 20.9 or newer
+(cd web && npm ci)                # once, Node 20.9 or newer; the subshell keeps the repo root
 uv run fixjury dashboard --out docs/dashboard
 ```
 

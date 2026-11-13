@@ -64,6 +64,9 @@ function percentTooltip(item: TooltipItem<"bar">): string {
 export type ChartKind = "acceptance" | "regression_free" | "cost" | "corpus";
 
 function acceptanceChart(agents: AgentSnapshot[]): ChartConfiguration<"bar"> {
+  const intervals = agents.map((agent) => agent.metrics.human_acceptance_ci);
+  const rates = agents.map((agent) => agent.metrics.human_acceptance_rate);
+
   return {
     type: "bar",
     data: {
@@ -73,10 +76,7 @@ function acceptanceChart(agents: AgentSnapshot[]): ChartConfiguration<"bar"> {
           // A floating bar from the lower to the upper bound: the interval is the
           // shape, the estimate is the marker drawn over it.
           label: "95% interval",
-          data: agents.map((agent) => {
-            const ci = agent.metrics.human_acceptance_ci;
-            return ci === null ? null : [ci.low, ci.high];
-          }),
+          data: intervals.map((ci) => (ci === null ? null : [ci.low, ci.high])),
           backgroundColor: "rgba(63, 125, 82, 0.16)",
           borderColor: "rgba(63, 125, 82, 0.45)",
           borderWidth: 1,
@@ -84,11 +84,12 @@ function acceptanceChart(agents: AgentSnapshot[]): ChartConfiguration<"bar"> {
           grouped: false,
         },
         {
+          // The marker is a hair line wide, so its own geometry is what the tooltip
+          // gets: read the rate from the snapshot instead, and keep it inside 0-100%.
           label: "Acceptance",
-          data: agents.map((agent) => {
-            const rate = agent.metrics.human_acceptance_rate;
-            return rate === null ? null : [rate - 0.004, rate + 0.004];
-          }),
+          data: rates.map((rate) =>
+            rate === null ? null : [Math.max(0, rate - 0.004), Math.min(1, rate + 0.004)],
+          ),
           backgroundColor: GOOD,
           barThickness: 26,
           grouped: false,
@@ -99,8 +100,31 @@ function acceptanceChart(agents: AgentSnapshot[]): ChartConfiguration<"bar"> {
       responsive: true,
       maintainAspectRatio: false,
       animation: false,
+      // Hovering a column shows every series in it, so the interval and the
+      // rate are never read one without the other.
+      interaction: { mode: "index", intersect: false },
       scales: { x: categories, y: percentAxis },
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: percentTooltip } } },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (item) => {
+              const label = item.dataset.label ?? "";
+              const index = item.dataIndex;
+              if (label === "95% interval") {
+                const ci = intervals[index];
+                return ci === null || ci === undefined
+                  ? `${label}: null`
+                  : `${label}: ${(ci.low * 100).toFixed(1)}–${(ci.high * 100).toFixed(1)}%`;
+              }
+              const rate = rates[index];
+              return rate === null || rate === undefined
+                ? `${label}: null`
+                : `${label}: ${(rate * 100).toFixed(1)}%`;
+            },
+          },
+        },
+      },
     },
   };
 }
@@ -123,6 +147,7 @@ function regressionFreeChart(agents: AgentSnapshot[]): ChartConfiguration<"bar">
       responsive: true,
       maintainAspectRatio: false,
       animation: false,
+      interaction: { mode: "index", intersect: false },
       scales: { x: categories, y: percentAxis },
       plugins: { legend: { display: false }, tooltip: { callbacks: { label: percentTooltip } } },
     },
@@ -150,6 +175,7 @@ function costChart(agents: AgentSnapshot[]): ChartConfiguration<"bar"> {
       responsive: true,
       maintainAspectRatio: false,
       animation: false,
+      interaction: { mode: "index", intersect: false },
       scales: {
         x: categories,
         y: {
@@ -205,6 +231,7 @@ function corpusChart(agents: AgentSnapshot[]): ChartConfiguration<"bar"> {
       responsive: true,
       maintainAspectRatio: false,
       animation: false,
+      interaction: { mode: "index", intersect: false },
       scales: { x: { stacked: true, ...categories }, y: { stacked: true, ...percentAxis } },
       plugins: {
         // The key is HTML, under the plot: readable without JavaScript and it does

@@ -39,12 +39,13 @@ uv run fixjury bench --agents baseline,swe-agent --verify
 uv run fixjury review pack && uv run fixjury review serve
 uv run fixjury metrics compute --agent baseline
 uv run fixjury report --charts && uv run fixjury dashboard
-cd web && npm ci && npm run build          # the metrics page, once, before the command above
+(cd web && npm ci)                        # once, Node 20.9 or newer
 ```
 
 `fixjury dashboard` shells out to `npm run build` in `web/` and copies the static export to `--out`, so
-Node 20.9 or newer and a `npm ci` in `web/` are prerequisites for that one command. CI does not build the
-page: the Python check chain below is the merge gate.
+Node 20.9 or newer and a `npm ci` in `web/` are prerequisites for that one command. A bare `npm run build`
+is not a shortcut: the page is prerendered from the snapshot export, so it fails outside that command. CI
+does not build the page: the Python check chain below is the merge gate.
 
 Definition of done for any code change:
 
@@ -52,7 +53,8 @@ Definition of done for any code change:
 uv run ruff check . && uv run ruff format --check . && uv run mypy src && uv run pytest -q
 ```
 
-A change that touches `web/` also runs `cd web && npm run typecheck && npm run build`.
+A change that touches `web/` also runs `(cd web && npm run typecheck)`, and the full static build through
+`uv run fixjury dashboard --out <dir>`, which is the only thing that supplies the snapshot export.
 
 ## Layout
 
