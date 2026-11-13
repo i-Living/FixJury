@@ -86,6 +86,7 @@ def run(
 
     async def go() -> Run:
         engine = make_engine()
+        await _reap_stale_networks()
         try:
             async with session_scope(make_session_maker(engine)) as session:
                 return await run_task(

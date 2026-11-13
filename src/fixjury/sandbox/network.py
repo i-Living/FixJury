@@ -24,17 +24,25 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
+import socket
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import uuid4
 
 import docker
 from docker.errors import DockerException, NotFound
 
+from fixjury.sandbox.container import SANDBOX_LABEL
+
 LOGGER = logging.getLogger(__name__)
 
 NETWORK_LABEL = "fixjury.network"
+# Who created the network, so a reaper can tell an abandoned one from a live run
+# that has simply not attached its container yet.
+OWNER_LABEL = "fixjury.owner"
 PREFIX = "fixjury-run-"
 DEFAULT_TIMEOUT_S = 60
 # A network older than this cannot belong to a run that is still starting, so a
@@ -61,7 +69,7 @@ def _create(client: docker.DockerClient, name: str) -> RunNetwork:
         name,
         driver="bridge",
         internal=True,
-        labels={NETWORK_LABEL: "1"},
+        labels={NETWORK_LABEL: "1", OWNER_LABEL: owner_value()},
         check_duplicate=True,
     )
     config = (network.attrs.get("IPAM") or {}).get("Config") or []
@@ -143,20 +151,92 @@ def is_stale(
     return age_seconds(attrs, now) >= older_than_s
 
 
+def _process_start_time(pid: int) -> str:
+    """Field 22 of /proc/<pid>/stat: the process start, which survives pid reuse."""
+
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    fields = raw.rsplit(")", 1)[-1].split()
+    # After the command name, field 3 is state; start time is field 22 overall.
+    return fields[19] if len(fields) > 19 else ""
+
+
+def owner_value(pid: int | None = None) -> str:
+    """``host:pid:start`` for the process creating the network."""
+
+    process = os.getpid() if pid is None else pid
+    return f"{socket.gethostname()}:{process}:{_process_start_time(process)}"
+
+
+def is_owner_alive(value: str) -> bool:
+    """Is the process named in an owner label still running, and the same one?
+
+    A reused pid gives a different start time, which is the whole point of storing
+    it: without that, a crash followed by an unrelated process taking the pid would
+    make a dead owner look alive forever.
+    """
+
+    host, _, rest = value.partition(":")
+    if host != socket.gethostname():
+        return False
+    raw_pid, _, started = rest.partition(":")
+    if not raw_pid.isdigit():
+        return False
+    if not started:
+        return Path(f"/proc/{raw_pid}").exists()
+    return _process_start_time(int(raw_pid)) == started
+
+
+def is_abandoned(
+    attrs: dict[str, object], now: datetime | None = None, older_than_s: int = STALE_AFTER_S
+) -> bool:
+    """Can this network be removed without pulling it from under a live run?
+
+    Liveness beats age. An owner on this host that is still running means the run is
+    in progress, however long the network has existed — an image pull can delay the
+    container for minutes. Without a live owner, a foreign or missing label falls
+    back to age, because that is the only evidence left.
+    """
+
+    labels = attrs.get("Labels")
+    owner = labels.get(OWNER_LABEL) if isinstance(labels, dict) else None
+    if isinstance(owner, str) and owner.partition(":")[0] == socket.gethostname():
+        # A dead process on this host is proof: it cannot attach a container later,
+        # so age does not have to be waited out.
+        return not is_owner_alive(owner)
+    return is_stale(attrs, older_than_s, now)
+
+
 async def reap_networks(older_than_s: int = STALE_AFTER_S) -> int:
     """Remove run networks left behind by a crashed process; returns the count.
 
-    Age-gated on purpose: a worker that starts while another one has just created a
-    network must not remove it before a container is attached.
+    Only networks whose creator is gone are removed; a live owner keeps its network
+    however old it is, which is what makes this safe to call at startup next to
+    another worker.
     """
+
+    now = datetime.now(UTC)
 
     def reap() -> int:
         client = docker.from_env()
         try:
             removed = 0
             for network in client.networks.list(filters={"label": NETWORK_LABEL}):
-                if not is_stale(network.attrs, older_than_s):
+                if not is_abandoned(network.attrs, now):
                     continue
+                name = network.name or ""
+                if not name:
+                    continue
+                # Docker refuses to remove a network that still has containers on
+                # it, so an abandoned container has to go first — and only ours:
+                # the label keeps somebody else's container out of this.
+                for container in client.containers.list(
+                    all=True, filters={"network": name, "label": SANDBOX_LABEL}
+                ):
+                    with contextlib.suppress(NotFound, DockerException):
+                        container.remove(force=True)
                 with contextlib.suppress(NotFound, DockerException):
                     network.remove()
                     removed += 1
@@ -169,11 +249,15 @@ async def reap_networks(older_than_s: int = STALE_AFTER_S) -> int:
 
 __all__ = [
     "NETWORK_LABEL",
+    "OWNER_LABEL",
     "STALE_AFTER_S",
     "NetworkError",
     "RunNetwork",
     "age_seconds",
+    "is_abandoned",
+    "is_owner_alive",
     "is_stale",
     "open_run_network",
+    "owner_value",
     "reap_networks",
 ]

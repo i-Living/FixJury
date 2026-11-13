@@ -86,7 +86,12 @@ def workspace(tmp_path: Path) -> Path:
 def fetch_script(target: str, proxy_url: str | None = None) -> str:
     lines = ["import urllib.request", f"target = {target!r}"]
     if proxy_url is None:
-        lines.append("print(urllib.request.urlopen(target, timeout=10).read().decode())")
+        # An empty ProxyHandler ignores proxy variables the image may carry: the
+        # point is whether the network reaches the target, not whether a proxy does.
+        lines += [
+            "opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))",
+            "print(opener.open(target, timeout=10).read().decode())",
+        ]
     else:
         lines += [
             f"proxy = {proxy_url!r}",
