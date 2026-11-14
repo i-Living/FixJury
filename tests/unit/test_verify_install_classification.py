@@ -41,6 +41,7 @@ class Environment:
         self.checkouts: list[Path] = []
         self.installed: list[Path] = []
         self.checks_run = False
+        self.versions_read: list[Path] = []
 
     @property
     def base_paths(self) -> list[Path]:
@@ -69,6 +70,10 @@ def prepare(monkeypatch: pytest.MonkeyPatch, env: Environment) -> Environment:
         env.checks_run = True
         return (), None, {}
 
+    def version(path: Path) -> dict[str, str]:
+        env.versions_read.append(path)
+        return {}
+
     def apply(workspace: Path, diff: str) -> None:
         (workspace / "pyproject.toml").write_text('[project]\nname = "demo"\n')
 
@@ -76,6 +81,7 @@ def prepare(monkeypatch: pytest.MonkeyPatch, env: Environment) -> Environment:
     monkeypatch.setattr(runner, "_install", install)
     monkeypatch.setattr(runner, "_run_checks", no_checks)
     monkeypatch.setattr(runner, "apply_patch", apply)
+    monkeypatch.setattr(runner, "scm_version_env", version)
     return env
 
 
@@ -113,6 +119,20 @@ def test_the_base_comparison_never_touches_the_workspace_the_installer_saw(
     assert env.checkouts == [tmp_path, tmp_path.with_name(f"{tmp_path.name}-base")]
     # A checkout of its own, and gone again once it has answered the question.
     assert not env.base_paths[0].exists()
+
+
+def test_the_version_is_read_before_the_diff_can_rewrite_git(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Host git must not run again on a workspace an untrusted build backend has touched."""
+
+    env = prepare(monkeypatch, Environment(tmp_path, installs=[True, True]))
+
+    verify(tmp_path)
+
+    assert env.versions_read.count(tmp_path) == 1
+    assert env.attempts == 2
+    assert tmp_path.with_name(f"{tmp_path.name}-base") in env.versions_read
 
 
 def test_a_single_failed_install_is_retried_before_the_diff_is_blamed(

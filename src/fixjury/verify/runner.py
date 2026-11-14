@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -34,6 +35,10 @@ from fixjury.verify.verdict import CheckOutcome, VerificationResult, assemble
 LOGGER = logging.getLogger(__name__)
 # ``git describe`` reads a local checkout; a hung one is a bug, not patience.
 GIT_QUERY_TIMEOUT_S = 30.0
+# A version as the packaging backends accept it, optionally preceded by a tag prefix.
+TAG_VERSION = re.compile(
+    r"v?(?P<version>\d+(?:\.\d+)*(?:(?:a|b|rc)\d+)?(?:\.post\d+)?(?:\.dev\d+)?)(?=$|[+\-])"
+)
 VENV = ".venv"
 VENV_BIN = f"/workspace/{VENV}/bin"
 PATH_WITH_VENV = f"{VENV_BIN}:/usr/local/bin:/usr/bin:/bin"
@@ -124,7 +129,22 @@ def scm_version_env(workspace: Path) -> dict[str, str]:
     tag = completed.stdout.strip()
     if completed.returncode != 0 or not tag:
         return {}
-    return {"SETUPTOOLS_SCM_PRETEND_VERSION": tag.removeprefix("v")}
+    version = _version_from_tag(tag)
+    if version is None:
+        LOGGER.warning("no version in tag %r; installing without one", tag)
+        return {}
+    return {"SETUPTOOLS_SCM_PRETEND_VERSION": version}
+
+
+def _version_from_tag(tag: str) -> str | None:
+    """The version inside a tag, not the whole tag: projects prefix them (``demo-v1.4.2``).
+
+    ``SETUPTOOLS_SCM_PRETEND_VERSION`` is compared as a version, so a project prefix
+    that the backend's own ``tag_regex`` would strip must be stripped here too.
+    """
+
+    match = TAG_VERSION.search(tag)
+    return match.group("version") if match is not None else None
 
 
 async def _install(spec: SandboxSpec, *, extra_env: dict[str, str] | None = None) -> None:
@@ -146,12 +166,9 @@ async def _install(spec: SandboxSpec, *, extra_env: dict[str, str] | None = None
             raise VerificationError(f"{' '.join(step)} failed: {result.output.strip()[-600:]}")
 
 
-async def _attempt_install(spec: SandboxSpec, workspace: Path) -> str | None:
+async def _attempt_install(spec: SandboxSpec, extra_env: dict[str, str]) -> str | None:
     """Install the project, returning the failure instead of raising: see ``verify_workspace``."""
 
-    # git is a blocking subprocess: off the loop, or a slow describe stalls every other
-    # task in the process and holds up cancellation.
-    extra_env = await asyncio.to_thread(scm_version_env, workspace)
     try:
         await _install(spec, extra_env=extra_env)
     except VerificationError as exc:
@@ -261,11 +278,15 @@ async def verify_workspace(
         )
 
     prepared = SandboxSpec(image=image, workspace=workspace, network=True, timeout_s=1800)
-    patched_failure = await _attempt_install(prepared, workspace)
+    # Read before the first install, and then never again: the install runs a build
+    # backend from the diff, so the ``.git`` it may have rewritten is not a place to
+    # point host git later. One lookup, reused by the retry and by the comparison.
+    patched_env = await asyncio.to_thread(scm_version_env, workspace)
+    patched_failure = await _attempt_install(prepared, patched_env)
     # A single failed install is not evidence: a resolver can time out on the network.
     # Only an install that fails twice is worth blaming on the diff.
     if patched_failure is not None:
-        patched_failure = await _attempt_install(prepared, workspace)
+        patched_failure = await _attempt_install(prepared, patched_env)
     if patched_failure is not None:
         # Whose failure it is decides how the pair is counted, and the exit status does
         # not say. The same install on the base commit does: if it fails there too, no
@@ -285,7 +306,8 @@ async def verify_workspace(
             base_spec = SandboxSpec(
                 image=image, workspace=base_workspace, network=True, timeout_s=1800
             )
-            base_failure = await _attempt_install(base_spec, base_workspace)
+            base_env = await asyncio.to_thread(scm_version_env, base_workspace)
+            base_failure = await _attempt_install(base_spec, base_env)
         finally:
             shutil.rmtree(base_workspace, ignore_errors=True)
         if base_failure is not None:

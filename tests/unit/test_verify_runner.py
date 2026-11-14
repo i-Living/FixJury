@@ -66,6 +66,32 @@ def test_the_nearest_tag_becomes_the_version_the_sandbox_cannot_read(repo: Path)
     assert scm_version_env(repo) == {"SETUPTOOLS_SCM_PRETEND_VERSION": "1.4.2"}
 
 
+@pytest.mark.parametrize(
+    ("tag", "version"),
+    [
+        ("v1.4.2", "1.4.2"),
+        ("1.4.2", "1.4.2"),
+        ("demo-v1.4.2", "1.4.2"),
+        ("9.0.0a3", "9.0.0a3"),
+        ("v2.0.0-rc.1", "2.0.0"),
+    ],
+)
+def test_a_prefixed_tag_hands_in_the_version_not_the_whole_tag(
+    repo: Path, tag: str, version: str
+) -> None:
+    """``SETUPTOOLS_SCM_PRETEND_VERSION`` is a version: a project prefix would be refused."""
+
+    git(repo, "tag", tag)
+
+    assert scm_version_env(repo) == {"SETUPTOOLS_SCM_PRETEND_VERSION": version}
+
+
+def test_a_tag_without_a_version_hands_in_nothing(repo: Path) -> None:
+    git(repo, "tag", "nightly")
+
+    assert scm_version_env(repo) == {}
+
+
 def test_a_checkout_without_tags_hands_in_no_version_of_its_own(tmp_path: Path) -> None:
     git(tmp_path, "init", "--quiet", "--initial-branch=main")
 
