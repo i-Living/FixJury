@@ -311,7 +311,7 @@ def test_an_infra_failure_queues_the_next_attempt(monkeypatch: pytest.MonkeyPatc
 
                     await ensure_task(session, DOCUMENT)
                     queued = await queue.enqueue(
-                        session, client, task_id=DOCUMENT.id, agent="baseline", attempt=1
+                        session, client, task_id=DOCUMENT.id, agent="queue-test", attempt=1
                     )
                     await client.rpush(queue.QUEUED_KEY, str(queued.id))
                     row = await process_run(client, session, queued.id, corpus_root=CORPUS)
@@ -320,7 +320,7 @@ def test_an_infra_failure_queues_the_next_attempt(monkeypatch: pytest.MonkeyPatc
                         for candidate in (
                             await session.scalars(
                                 select(Run).where(
-                                    Run.task_id == DOCUMENT.id, Run.agent == "baseline"
+                                    Run.task_id == DOCUMENT.id, Run.agent == "queue-test"
                                 )
                             )
                         ).all()

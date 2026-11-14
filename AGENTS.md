@@ -42,6 +42,7 @@ uv run fixjury review pack && uv run fixjury review serve
 uv run fixjury metrics compute --agent baseline
 (cd web && npm ci)                        # once, Node 20.9 or newer
 uv run fixjury report --charts && uv run fixjury dashboard
+uv run fixjury export --out docs/export   # raw runs/verdicts/rejections as JSONL + hashed manifest
 ```
 
 `fixjury dashboard` shells out to `npm run build` in `web/` and copies the static export to `--out`, so
@@ -77,7 +78,8 @@ src/fixjury/sandbox/       container lifecycle, per-run network, tool API, diff 
 src/fixjury/verify/        check runner, held-out tests, policy, verdict assembly
 src/fixjury/review/        blind batching, rubric, review page (app.py + templates/)
 src/fixjury/metrics/       metric definitions (compute.py), snapshots (service.py), cost
-src/fixjury/report/        markdown report, charts, the export the metrics page is built from
+src/fixjury/report/        markdown report, charts, the snapshot export the metrics page is built from
+src/fixjury/export.py      raw runs/verdicts/rejections as JSONL, with a hashed manifest
 src/fixjury/prompts/       *.md prompt files (English)
 config/pricing.yaml        pinned rates + pricing_version
 dockerfiles/mini/          the mini-swe-agent harness image (one pinned Dockerfile)
