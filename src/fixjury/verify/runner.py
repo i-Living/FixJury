@@ -70,6 +70,24 @@ def apply_patch(workspace: Path, diff: str) -> None:
         raise VerificationError(f"the diff does not apply: {detail}")
 
 
+def restore_base(workspace: Path, base_commit: str) -> None:
+    """Throw the patch away and put the base commit back, generated files and all."""
+
+    git = shutil.which("git")
+    if git is None:
+        raise VerificationError("git is not installed")
+    for argv in (
+        [git, "-C", str(workspace), "reset", "--hard", "--quiet", base_commit],
+        [git, "-C", str(workspace), "clean", "-fdq"],
+    ):
+        completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            argv, capture_output=True, text=True, check=False
+        )
+        if completed.returncode != 0:
+            detail = completed.stderr.strip() or completed.stdout.strip()
+            raise VerificationError(f"cannot restore the base commit: {detail}")
+
+
 def overlay_heldout(workspace: Path, bundle: Path) -> tuple[str, ...]:
     """Copy the post-fix test files over the checkout and return their paths."""
 
@@ -239,7 +257,30 @@ async def verify_workspace(
         )
 
     prepared = SandboxSpec(image=image, workspace=workspace, network=True, timeout_s=1800)
-    await _install(prepared, extra_env=scm_version_env(workspace))
+    try:
+        await _install(prepared, extra_env=scm_version_env(workspace))
+    except VerificationError as patched_failure:
+        # An install that fails after the patch is applied is either the patch's doing
+        # or the environment's, and the exit status does not say which. The same install
+        # on the base commit does: if it fails there too, no diff could have been
+        # verified and the pair is an exclusion; if it succeeds, the diff broke a build
+        # that worked, which is a failed fix, not a missing observation.
+        restore_base(workspace, base_commit)
+        try:
+            await _install(prepared, extra_env=scm_version_env(workspace))
+        except VerificationError as base_failure:
+            raise VerificationError(
+                f"install fails on the base commit too ({base_failure}); "
+                f"with the diff applied: {patched_failure}"
+            ) from patched_failure
+        return assemble(
+            (),
+            policy=policy,
+            heldout_pass=None,
+            tool_versions={},
+            extra_violations=(Violation(RejectionCode.BUILD_BREAK, str(patched_failure)),),
+            note="the diff breaks an install that works on the base commit",
+        )
 
     running = SandboxSpec(image=image, workspace=workspace, network=False, timeout_s=1800)
     outcomes, heldout_pass, versions = await _run_checks(

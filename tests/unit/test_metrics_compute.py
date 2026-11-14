@@ -211,7 +211,7 @@ def test_an_excluded_retry_is_not_evidence_about_the_pair() -> None:
     report = compute_metrics(
         [
             attempt("T-1", has_diff=False, diff_sha256=None, heldout_pass=None),
-            attempt("T-2", status="infra_failed", has_diff=True, heldout_pass=None),
+            attempt("T-1", status="infra_failed", has_diff=True, heldout_pass=None),
         ],
         agent="baseline",
     )
