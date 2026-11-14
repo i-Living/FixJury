@@ -22,7 +22,7 @@ import subprocess
 from pathlib import Path
 
 from fixjury.models import RejectionCode
-from fixjury.run import checkout_workspace
+from fixjury.run import RunError, checkout_workspace
 from fixjury.sandbox.container import SandboxSpec, open_sandbox
 from fixjury.sandbox.tools import ExecResult, exec_command
 from fixjury.tasks.heldout import HELDOUT_FILES_DIRNAME, read_heldout
@@ -68,26 +68,6 @@ def apply_patch(workspace: Path, diff: str) -> None:
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip()
         raise VerificationError(f"the diff does not apply: {detail}")
-
-
-def restore_base(workspace: Path, base_commit: str) -> None:
-    """Throw the patch away and put the base commit back, generated files and all."""
-
-    git = shutil.which("git")
-    if git is None:
-        raise VerificationError("git is not installed")
-    for argv in (
-        [git, "-C", str(workspace), "reset", "--hard", "--quiet", base_commit],
-        # ``-x`` as well: ``.venv/`` is ignored by every Python project, so without it
-        # the baseline install would reuse the environment the diff just built.
-        [git, "-C", str(workspace), "clean", "-fdxq"],
-    ):
-        completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
-            argv, capture_output=True, text=True, check=False
-        )
-        if completed.returncode != 0:
-            detail = completed.stderr.strip() or completed.stdout.strip()
-            raise VerificationError(f"cannot restore the base commit: {detail}")
 
 
 def overlay_heldout(workspace: Path, bundle: Path) -> tuple[str, ...]:
@@ -279,8 +259,23 @@ async def verify_workspace(
         # not say. The same install on the base commit does: if it fails there too, no
         # diff could have been verified and the pair is an exclusion; if it succeeds,
         # the diff broke a build that worked, which is a failed fix.
-        restore_base(workspace, base_commit)
-        base_failure = await _attempt_install(prepared, workspace)
+        #
+        # The base gets its own checkout rather than a revert: the install runs a build
+        # backend from the diff, with the workspace mounted writable, so ``.git`` is
+        # untrusted by then. Running host git against it — even ``reset --hard`` — hands
+        # that backend hooks, filters and config that execute on the host.
+        base_workspace = workspace.with_name(f"{workspace.name}-base")
+        try:
+            await checkout_workspace(document.repo, base_commit, base_workspace)
+        except RunError as exc:
+            raise VerificationError(f"cannot check out the base commit to compare: {exc}") from exc
+        try:
+            base_spec = SandboxSpec(
+                image=image, workspace=base_workspace, network=True, timeout_s=1800
+            )
+            base_failure = await _attempt_install(base_spec, base_workspace)
+        finally:
+            shutil.rmtree(base_workspace, ignore_errors=True)
         if base_failure is not None:
             raise VerificationError(
                 f"install fails on the base commit too ({base_failure}); "

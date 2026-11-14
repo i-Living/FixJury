@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 import shutil
 import subprocess
-import time
+import threading
 from pathlib import Path
 
 import pytest
 
+import fixjury.run as run_module
 from fixjury.config import settings
 from fixjury.run import checkout_base, checkout_workspace, mirror_path
 
@@ -73,23 +74,36 @@ def test_a_cancelled_checkout_still_cleans_up_after_itself(
     """git cannot be interrupted, so deletion waits for the thread it will otherwise beat."""
 
     workspace = tmp_path / "workspace"
+    started = threading.Event()
+    release = threading.Event()
 
     def slow_checkout(repo: str, commit: str, dest: Path) -> None:
         workspace.mkdir(parents=True, exist_ok=True)
-        time.sleep(0.2)
+        started.set()
+        assert release.wait(timeout=5), "the test never released the checkout"
         (workspace / "late.txt").write_text("git was still writing\n")
 
     async def scenario() -> None:
+        cleaned = asyncio.Event()
+        discard = run_module._discard_after
+
+        def discard_then_signal(task: asyncio.Future[None], path: Path) -> None:
+            discard(task, path)
+            cleaned.set()
+
         monkeypatch.setattr("fixjury.run.checkout_base", slow_checkout)
+        monkeypatch.setattr(run_module, "_discard_after", discard_then_signal)
         task = asyncio.ensure_future(
             checkout_workspace("https://example.test/repo", "0" * 40, workspace)
         )
-        await asyncio.sleep(0.05)
+        # Cancel only once git is inside the workspace, and wait for the cleanup to
+        # report itself: no wall-clock guesswork either way.
+        await asyncio.wait_for(asyncio.to_thread(started.wait), timeout=5)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        # The callback runs when the thread stops; give it a moment, not a spin loop.
-        await asyncio.sleep(0.5)
+        release.set()
+        await asyncio.wait_for(cleaned.wait(), timeout=5)
 
     asyncio.run(scenario())
 
