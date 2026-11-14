@@ -25,6 +25,10 @@ from fixjury.config import settings
 from fixjury.sandbox.container import SandboxHandle
 
 TRUNCATION_MARKER = "\n… [output truncated]"
+RESUME_MARKER = "\n… [output resumes]"
+# The exact bookkeeping lines a capped output inserts. Filtering by "starts with an
+# ellipsis" would also swallow a real diagnostic such as "… connection refused".
+TRUNCATION_MARKERS = (TRUNCATION_MARKER.strip(), RESUME_MARKER.strip())
 
 
 class ToolError(RuntimeError):
@@ -69,7 +73,7 @@ def _cap(output: str, limit: int) -> tuple[str, bool]:
         return output, False
     kept = max(limit // 2, 1)
     head, tail = output[:kept], output[-kept:]
-    return f"{head}{TRUNCATION_MARKER}\n… [output resumes]\n{tail}", True
+    return f"{head}{TRUNCATION_MARKER}{RESUME_MARKER}\n{tail}", True
 
 
 async def exec_command(

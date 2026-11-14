@@ -22,7 +22,7 @@ from fixjury.models import Run, RunStatus
 from fixjury.run import ensure_task
 from fixjury.tasks.loader import read_index, read_task, task_path
 from fixjury.verify.service import VerifyError, verify_run
-from fixjury.worker import work_once
+from fixjury.worker import WorkerError, work_once
 
 LOGGER = logging.getLogger(__name__)
 
@@ -133,7 +133,14 @@ async def drain(
             break
         # One transaction per run: a crash must not roll back the runs before it.
         async with session_scope(maker) as session:
-            row = await work_once(client, session, corpus_root=corpus_root, image=image, wait_s=1.0)
+            try:
+                row = await work_once(
+                    client, session, corpus_root=corpus_root, image=image, wait_s=1.0
+                )
+            except WorkerError as exc:
+                # One unusable delivery is not a reason to abandon the other pairs.
+                LOGGER.warning("dropping a delivery: %s", exc)
+                continue
             if row is None:
                 break
             summary.record(row)

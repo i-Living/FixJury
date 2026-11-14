@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import redis.asyncio as redis
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fixjury import queue
@@ -22,10 +23,24 @@ from fixjury.run import RunError, run_task
 from fixjury.tasks.loader import read_task, task_path
 
 LOGGER = logging.getLogger(__name__)
+# PostgreSQL: "could not obtain lock on row in relation" — raised by FOR UPDATE NOWAIT.
+LOCK_NOT_AVAILABLE = "55P03"
 
 
 class WorkerError(RuntimeError):
     """A queued item cannot be processed."""
+
+
+def _is_lock_conflict(exc: DBAPIError) -> bool:
+    """Postgres refuses a ``NOWAIT`` lock with SQLSTATE 55P03, and nothing else means "taken".
+
+    The driver's exception class is generic (``AsyncAdapt_asyncpg_dbapi.Error``), so the
+    state code is the only reliable discriminator.
+    """
+
+    orig = getattr(exc, "orig", None)
+    state = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    return state == LOCK_NOT_AVAILABLE
 
 
 def redis_client() -> queue.RedisList:
@@ -42,9 +57,21 @@ async def process_run(
     corpus_root: Path,
     image: str | None = None,
 ) -> Run:
-    """Execute one claimed run and settle the queue around it."""
+    """Execute one claimed run and settle the queue around it.
 
-    run = await session.get(Run, run_id)
+    The row is locked ``NOWAIT`` for the whole attempt: two deliveries of the same id
+    — a stale duplicate left in Redis, or a second worker — cannot both execute it,
+    and the loser drops the id without blocking on a run that takes minutes.
+    """
+
+    try:
+        run = await session.get(Run, run_id, with_for_update={"nowait": True})
+    except DBAPIError as exc:
+        if not _is_lock_conflict(exc):
+            raise
+        LOGGER.info("run %s is being worked elsewhere, dropping this delivery", run_id)
+        await queue.complete(client, str(run_id))
+        raise WorkerError(f"run {run_id} is already claimed") from exc
     if run is None:
         await queue.complete(client, str(run_id))
         raise WorkerError(f"run {run_id} is queued but missing from the database")

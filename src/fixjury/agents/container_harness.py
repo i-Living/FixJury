@@ -30,7 +30,7 @@ from fixjury.sandbox.container import SandboxSpec, open_sandbox
 from fixjury.sandbox.diff import UnreadableDiff, capture_diff
 from fixjury.sandbox.network import open_run_network
 from fixjury.sandbox.proxy import AllowlistProxy
-from fixjury.sandbox.tools import TRUNCATION_MARKER, exec_command
+from fixjury.sandbox.tools import TRUNCATION_MARKERS, exec_command
 
 LOGGER = logging.getLogger(__name__)
 TASK_FILENAME = "TASK.md"
@@ -252,7 +252,7 @@ def _last_meaningful_line(output: str) -> str:
 
     for line in reversed(output.strip().splitlines()):
         stripped = line.strip()
-        if stripped and not stripped.startswith("…") and stripped != TRUNCATION_MARKER:
+        if stripped and stripped not in TRUNCATION_MARKERS:
             return stripped
     return ""
 

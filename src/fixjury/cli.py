@@ -31,7 +31,7 @@ from fixjury.tasks.cli import app as tasks_app
 from fixjury.tasks.loader import read_task, task_path
 from fixjury.verify.runner import VerificationError
 from fixjury.verify.service import VerifyError, verify_run
-from fixjury.worker import redis_client, work_once
+from fixjury.worker import WorkerError, redis_client, work_once
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 app.add_typer(tasks_app, name="tasks")
@@ -248,13 +248,19 @@ def worker(
         try:
             while True:
                 async with session_scope(make_session_maker(engine)) as session:
-                    row = await work_once(
-                        client,
-                        session,
-                        corpus_root=corpus,
-                        image=image,
-                        wait_s=wait_s,
-                    )
+                    try:
+                        row = await work_once(
+                            client,
+                            session,
+                            corpus_root=corpus,
+                            image=image,
+                            wait_s=wait_s,
+                        )
+                    except WorkerError as exc:
+                        # A duplicate delivery or a missing row: log it and keep
+                        # serving the queue instead of exiting the worker.
+                        typer.echo(f"dropped a delivery: {exc}", err=True)
+                        continue
                 if row is not None:
                     typer.echo(
                         f"run {row.id} {row.status.value} agent={row.agent} "
