@@ -73,7 +73,12 @@ def test_the_nearest_tag_becomes_the_version_the_sandbox_cannot_read(repo: Path)
         ("1.4.2", "1.4.2"),
         ("demo-v1.4.2", "1.4.2"),
         ("9.0.0a3", "9.0.0a3"),
-        ("v2.0.0-rc.1", "2.0.0"),
+        # Suffixes are written the way a backend compares them, not the way a tag does.
+        ("v2.0.0-rc.1", "2.0.0rc1"),
+        ("2.0.0-beta.2", "2.0.0b2"),
+        ("v2.0.0-1", "2.0.0.post1"),
+        ("v1.0.0.dev3", "1.0.0.dev3"),
+        ("1.2.3+ubuntu", "1.2.3+ubuntu"),
     ],
 )
 def test_a_prefixed_tag_hands_in_the_version_not_the_whole_tag(

@@ -35,10 +35,26 @@ from fixjury.verify.verdict import CheckOutcome, VerificationResult, assemble
 LOGGER = logging.getLogger(__name__)
 # ``git describe`` reads a local checkout; a hung one is a bug, not patience.
 GIT_QUERY_TIMEOUT_S = 30.0
-# A version as the packaging backends accept it, optionally preceded by a tag prefix.
+# A tag may carry a project prefix and a free-form suffix; the version inside it does not.
 TAG_VERSION = re.compile(
-    r"v?(?P<version>\d+(?:\.\d+)*(?:(?:a|b|rc)\d+)?(?:\.post\d+)?(?:\.dev\d+)?)(?=$|[+\-])"
+    r"v?"
+    r"(?P<release>\d+(?:\.\d+)*)"
+    r"(?:[-_.]?(?P<label>a|alpha|b|beta|c|rc|pre|preview)[-_.]?(?P<number>\d+)?)?"
+    r"(?:[-_.]?(?P<post>post|rev|r)[-_.]?(?P<post_number>\d+)?)?"
+    r"(?:[-_.]?(?P<dev>dev)[-_.]?(?P<dev_number>\d+)?)?"
+    r"(?:[-_.](?P<import_number>\d+))?"
+    r"(?P<local>\+[0-9A-Za-z.\-]+)?$"
 )
+PRE_RELEASE_LABELS = {
+    "a": "a",
+    "alpha": "a",
+    "b": "b",
+    "beta": "b",
+    "c": "rc",
+    "rc": "rc",
+    "pre": "rc",
+    "preview": "rc",
+}
 VENV = ".venv"
 VENV_BIN = f"/workspace/{VENV}/bin"
 PATH_WITH_VENV = f"{VENV_BIN}:/usr/local/bin:/usr/bin:/bin"
@@ -144,7 +160,19 @@ def _version_from_tag(tag: str) -> str | None:
     """
 
     match = TAG_VERSION.search(tag)
-    return match.group("version") if match is not None else None
+    if match is None:
+        return None
+    parts = [match["release"]]
+    if match["label"]:
+        parts.append(PRE_RELEASE_LABELS[match["label"]] + (match["number"] or "0"))
+    if match["post"]:
+        parts.append(f".post{match['post_number'] or '0'}")
+    if match["dev"]:
+        parts.append(f".dev{match['dev_number'] or '0'}")
+    if match["import_number"]:
+        # A bare trailing number is a build after the release: ``v2.0.0-1`` is 2.0.0.post1.
+        parts.append(f".post{match['import_number']}")
+    return "".join(parts) + (match["local"] or "")
 
 
 async def _install(spec: SandboxSpec, *, extra_env: dict[str, str] | None = None) -> None:
