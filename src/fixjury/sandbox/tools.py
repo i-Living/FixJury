@@ -58,9 +58,18 @@ def resolve_path(handle: SandboxHandle, path: str) -> str:
 
 
 def _cap(output: str, limit: int) -> tuple[str, bool]:
+    """Keep both ends of a long output, with the middle elided.
+
+    A test suite puts its failure at the end and a compiler its first error at the
+    top, so keeping one end only hides half the diagnoses. The caller sees how much
+    is missing from the marker.
+    """
+
     if len(output) <= limit:
         return output, False
-    return output[:limit] + TRUNCATION_MARKER, True
+    kept = max(limit // 2, 1)
+    head, tail = output[:kept], output[-kept:]
+    return f"{head}{TRUNCATION_MARKER}\n… [output resumes]\n{tail}", True
 
 
 async def exec_command(

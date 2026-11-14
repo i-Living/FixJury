@@ -103,7 +103,11 @@ def test_output_is_capped_with_an_explicit_marker(monkeypatch: pytest.MonkeyPatc
 
     result = run(exec_command(handle(container), ["cat", "big.txt"]))
 
-    assert result.output == "0123456789" + TRUNCATION_MARKER  # type: ignore[attr-defined]
+    # Both ends survive: the first error and the failing assertion are at opposite
+    # ends of a long output, and keeping one of them hides half the diagnosis.
+    assert result.output.startswith("01234")  # type: ignore[attr-defined]
+    assert result.output.endswith("bcdef")  # type: ignore[attr-defined]
+    assert TRUNCATION_MARKER in result.output  # type: ignore[attr-defined]
     assert result.truncated is True  # type: ignore[attr-defined]
 
 

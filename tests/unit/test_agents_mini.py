@@ -62,6 +62,15 @@ def test_the_config_is_yaml_and_carries_the_endpoint_without_argv() -> None:
     assert "secret-key" not in " ".join(mini.COMMAND)
 
 
+def test_a_bare_model_name_is_named_for_litellm() -> None:
+    """litellm refuses a name without a provider; the endpoint speaks OpenAI."""
+
+    bare = LlmConfig(base_url=LLM.base_url, model="deepseek-v4.1-flash")
+    parsed = yaml.safe_load(config_text(bare, max_steps=1))
+
+    assert parsed["model"]["model_name"] == "openai/deepseek-v4.1-flash"
+
+
 def test_the_session_header_is_written_only_when_a_session_is_configured() -> None:
     with_session = yaml.safe_load(config_text(LLM, max_steps=5))
     without_llm = LlmConfig(base_url=LLM.base_url, model=LLM.model)

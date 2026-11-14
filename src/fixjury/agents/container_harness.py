@@ -30,7 +30,7 @@ from fixjury.sandbox.container import SandboxSpec, open_sandbox
 from fixjury.sandbox.diff import UnreadableDiff, capture_diff
 from fixjury.sandbox.network import open_run_network
 from fixjury.sandbox.proxy import AllowlistProxy
-from fixjury.sandbox.tools import exec_command
+from fixjury.sandbox.tools import TRUNCATION_MARKER, exec_command
 
 LOGGER = logging.getLogger(__name__)
 TASK_FILENAME = "TASK.md"
@@ -239,8 +239,22 @@ class ContainerHarnessAdapter:
             tokens_out=trail.tokens_out if trail else 0,
             steps=trail.steps if trail else 0,
             sandbox_seconds=lifetime,
-            summary=output.strip().splitlines()[-1] if output.strip() else "",
+            summary=_last_meaningful_line(output),
         )
+
+
+def _last_meaningful_line(output: str) -> str:
+    """The last line a reader can use, skipping the truncation markers.
+
+    A capped output ends with bookkeeping rather than with the failure, and the
+    failure is the only reason this string exists.
+    """
+
+    for line in reversed(output.strip().splitlines()):
+        stripped = line.strip()
+        if stripped and not stripped.startswith("…") and stripped != TRUNCATION_MARKER:
+            return stripped
+    return ""
 
 
 def stash_workspace_entry(workspace: Path, name: str) -> str:
