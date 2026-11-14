@@ -82,7 +82,7 @@ class MetricsReport:
     human_acceptance_ci: Interval | None
     regression_free_acceptance_rate: float | None
     regression_free_acceptance_ci: Interval | None
-    task_success_rate: float
+    task_success_rate: float | None
     tokens_per_accepted_fix: Decimal | None
     cost_per_accepted_fix: Decimal | None
     median_time_to_repair_s: float | None
@@ -252,7 +252,9 @@ def compute_metrics(attempts: Sequence[Attempt], *, agent: str) -> MetricsReport
             if regression_denominator
             else None
         ),
-        task_success_rate=automated / pairs if pairs else 0.0,
+        # No pair, no rate: zero would say "nothing worked" about a corpus that was
+        # never run, the same mistake as a zero cost per accepted fix.
+        task_success_rate=automated / pairs if pairs else None,
         tokens_per_accepted_fix=(
             (Decimal(tokens_total) / Decimal(accepted_pairs)).quantize(Decimal("0.01"))
             if accepted_pairs

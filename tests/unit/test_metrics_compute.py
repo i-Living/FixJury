@@ -189,6 +189,14 @@ def test_cost_per_accepted_fix_divides_by_accepted_pairs() -> None:
     assert report.cost_per_accepted_fix == Decimal("4.0000")
 
 
+def test_an_empty_corpus_has_no_task_success_rate() -> None:
+    """Zero pairs is "not run", not "nothing passed" — the same rule as a null cost."""
+
+    report = compute_metrics([], agent="baseline")
+
+    assert report.task_success_rate is None
+
+
 def test_task_success_rate_counts_automated_pass_pairs() -> None:
     report = compute_metrics(
         [
