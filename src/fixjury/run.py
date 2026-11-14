@@ -208,7 +208,9 @@ def _ensure_mirror(repo_url: str, git: str, env: dict[str, str]) -> Path | None:
     mirror.parent.mkdir(parents=True, exist_ok=True)
     staging = mirror.with_name(f"{mirror.name}.{os.getpid()}")
     shutil.rmtree(staging, ignore_errors=True)
-    completed = _run_git([git, "clone", "--quiet", "--bare", repo_url, str(staging)], env)
+    # ``--mirror``, not ``--bare``: it records every ref in the fetch refspec, so a
+    # refresh also brings branches other than the default one.
+    completed = _run_git([git, "clone", "--quiet", "--mirror", repo_url, str(staging)], env)
     if completed.returncode != 0:
         shutil.rmtree(staging, ignore_errors=True)
         LOGGER.warning("cannot cache %s: %s", repo_url, completed.stderr.strip())
@@ -224,8 +226,21 @@ def _ensure_mirror(repo_url: str, git: str, env: dict[str, str]) -> Path | None:
 def _clone_local(git: str, mirror: Path, dest: Path, base_commit: str, env: dict[str, str]) -> bool:
     """Clone from the mirror and check out the commit; ``False`` if the mirror is stale."""
 
+    # ``--no-hardlinks`` copies the objects instead of sharing inodes with the mirror.
+    # The workspace is mounted read-write into the sandbox, so an agent that rewrites
+    # its object store would otherwise edit the cache — and every later checkout of it.
     clone = _run_git(
-        [git, "clone", "--quiet", "--no-checkout", "--local", str(mirror), str(dest)], env
+        [
+            git,
+            "clone",
+            "--quiet",
+            "--no-checkout",
+            "--local",
+            "--no-hardlinks",
+            str(mirror),
+            str(dest),
+        ],
+        env,
     )
     if clone.returncode != 0:
         return False
@@ -266,7 +281,22 @@ def refresh_mirror(repo_url: str) -> None:
     if not (mirror / "HEAD").is_file():
         return
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
-    _run_git([git, "-C", str(mirror), "fetch", "--quiet", "--prune", "origin"], env)
+    # The refspec is explicit: a cache written by an older build was cloned ``--bare``
+    # and has no fetch refspec at all, so ``fetch origin`` would leave it stale forever.
+    _run_git(
+        [
+            git,
+            "-C",
+            str(mirror),
+            "fetch",
+            "--quiet",
+            "--prune",
+            "origin",
+            "+refs/heads/*:refs/heads/*",
+            "+refs/tags/*:refs/tags/*",
+        ],
+        env,
+    )
 
 
 def _task_row(document: TaskDocument) -> Task:
