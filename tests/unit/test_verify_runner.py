@@ -76,6 +76,19 @@ def test_a_directory_that_is_not_a_repository_hands_in_no_version(tmp_path: Path
     assert scm_version_env(tmp_path / "absent") == {}
 
 
+def test_a_hung_git_lookup_gives_up_instead_of_holding_the_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The lookup reads a local checkout; a hang is a bug, and the install still matters."""
+
+    def hang(*args: object, **kwargs: object) -> None:
+        raise subprocess.TimeoutExpired("git", 30.0)
+
+    monkeypatch.setattr("fixjury.verify.runner.subprocess.run", hang)
+
+    assert scm_version_env(tmp_path) == {}
+
+
 def test_a_new_file_is_created(repo: Path) -> None:
     diff = (
         "diff --git a/tests/test_new.py b/tests/test_new.py\n"

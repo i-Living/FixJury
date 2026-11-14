@@ -16,6 +16,7 @@ overwrite the tests that judge it.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import shutil
 import subprocess
@@ -31,6 +32,8 @@ from fixjury.verify.policy import PolicyResult, Violation, check_policy
 from fixjury.verify.verdict import CheckOutcome, VerificationResult, assemble
 
 LOGGER = logging.getLogger(__name__)
+# ``git describe`` reads a local checkout; a hung one is a bug, not patience.
+GIT_QUERY_TIMEOUT_S = 30.0
 VENV = ".venv"
 VENV_BIN = f"/workspace/{VENV}/bin"
 PATH_WITH_VENV = f"{VENV_BIN}:/usr/local/bin:/usr/bin:/bin"
@@ -106,12 +109,18 @@ def scm_version_env(workspace: Path) -> dict[str, str]:
     git = shutil.which("git")
     if git is None:
         return {}
-    completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
-        [git, "-C", str(workspace), "describe", "--tags", "--abbrev=0"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            [git, "-C", str(workspace), "describe", "--tags", "--abbrev=0"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=GIT_QUERY_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        # A hung lookup must not hold the verification: the install is what matters.
+        LOGGER.warning("git describe timed out in %s", workspace)
+        return {}
     tag = completed.stdout.strip()
     if completed.returncode != 0 or not tag:
         return {}
@@ -140,8 +149,11 @@ async def _install(spec: SandboxSpec, *, extra_env: dict[str, str] | None = None
 async def _attempt_install(spec: SandboxSpec, workspace: Path) -> str | None:
     """Install the project, returning the failure instead of raising: see ``verify_workspace``."""
 
+    # git is a blocking subprocess: off the loop, or a slow describe stalls every other
+    # task in the process and holds up cancellation.
+    extra_env = await asyncio.to_thread(scm_version_env, workspace)
     try:
-        await _install(spec, extra_env=scm_version_env(workspace))
+        await _install(spec, extra_env=extra_env)
     except VerificationError as exc:
         return str(exc)
     return None
