@@ -21,11 +21,14 @@ import logging
 import re
 import shutil
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 from fixjury.models import RejectionCode
 from fixjury.run import RunError, checkout_workspace
 from fixjury.sandbox.container import SandboxSpec, open_sandbox
+from fixjury.sandbox.network import open_run_network
+from fixjury.sandbox.proxy import AllowlistProxy, proxy_environment
 from fixjury.sandbox.tools import ExecResult, exec_command
 from fixjury.tasks.heldout import HELDOUT_FILES_DIRNAME, read_heldout
 from fixjury.tasks.schema import CheckTool, TaskDocument, parse_check
@@ -33,6 +36,8 @@ from fixjury.verify.policy import PolicyResult, Violation, check_policy
 from fixjury.verify.verdict import CheckOutcome, VerificationResult, assemble
 
 LOGGER = logging.getLogger(__name__)
+# The hosts pip needs and nothing else: an index and the files it serves.
+INDEX_TARGETS = ("pypi.org:443", "files.pythonhosted.org:443")
 # ``git describe`` reads a local checkout; a hung one is a bug, not patience.
 GIT_QUERY_TIMEOUT_S = 30.0
 # A tag may carry a project prefix and a free-form suffix; the version inside it does not.
@@ -176,22 +181,41 @@ def _version_from_tag(tag: str) -> str | None:
 
 
 async def _install(spec: SandboxSpec, *, extra_env: dict[str, str] | None = None) -> None:
+    """Install the project, with the package index as the only host it can reach.
+
+    The install runs build backends taken from the diff, so it is not a container that
+    executes no agent-authored code: giving it the open internet would make a patch a
+    way to call any endpoint. The index is the one host pip needs, and an allowlisting
+    proxy on an internal network is the only route there — clearing proxy variables in
+    the container does not reach anything else.
+    """
+
     env = {"PATH": PATH_WITH_VENV, **(extra_env or {})}
-    async with open_sandbox(spec) as sandbox:
-        for step in INSTALL_STEPS:
-            result = await exec_command(
-                sandbox,
-                step,
-                timeout_s=600.0,
-                workdir="/workspace",
-                env=env,
-            )
-            if result.exit_code == 0:
-                continue
-            if step[-1] == ".[dev]":
-                # A project without a dev extra is not a broken project.
-                continue
-            raise VerificationError(f"{' '.join(step)} failed: {result.output.strip()[-600:]}")
+    async with open_run_network() as network:
+        proxy = AllowlistProxy(allowed=set(INDEX_TARGETS))
+        proxy.host = network.gateway
+        await proxy.start()
+        try:
+            install_spec = replace(spec, network_name=network.name, network=False)
+            async with open_sandbox(install_spec) as sandbox:
+                for step in INSTALL_STEPS:
+                    result = await exec_command(
+                        sandbox,
+                        step,
+                        timeout_s=600.0,
+                        workdir="/workspace",
+                        env={**env, **proxy_environment(proxy.url)},
+                    )
+                    if result.exit_code == 0:
+                        continue
+                    if step[-1] == ".[dev]":
+                        # A project without a dev extra is not a broken project.
+                        continue
+                    raise VerificationError(
+                        f"{' '.join(step)} failed: {result.output.strip()[-600:]}"
+                    )
+        finally:
+            await proxy.stop()
 
 
 async def _attempt_install(spec: SandboxSpec, extra_env: dict[str, str]) -> str | None:

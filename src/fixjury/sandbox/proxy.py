@@ -27,6 +27,25 @@ def normalise(host: str, port: int | None) -> str:
     return f"{host.lower()}:{port or 80}"
 
 
+def proxy_environment(proxy_url: str) -> dict[str, str]:
+    """Every egress variable points at the proxy, and none of them is an exception.
+
+    An empty ``NO_PROXY`` is deliberate. Excluding localhost would only make sense
+    if the sandbox had something local worth reaching, and it does not; worse, it
+    silently bypasses the proxy whenever the model endpoint is self-hosted on the
+    host's loopback, which turns a working run into a connection error.
+    """
+
+    return {
+        "HTTP_PROXY": proxy_url,
+        "HTTPS_PROXY": proxy_url,
+        "http_proxy": proxy_url,
+        "https_proxy": proxy_url,
+        "NO_PROXY": "",
+        "no_proxy": "",
+    }
+
+
 @dataclass
 class AllowlistProxy:
     """A minimal forward proxy restricted to ``allowed`` targets."""

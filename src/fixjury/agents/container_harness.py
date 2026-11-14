@@ -29,7 +29,7 @@ from fixjury.agents.mini import MiniRun, read_run
 from fixjury.sandbox.container import SandboxSpec, open_sandbox
 from fixjury.sandbox.diff import UnreadableDiff, capture_diff
 from fixjury.sandbox.network import open_run_network
-from fixjury.sandbox.proxy import AllowlistProxy
+from fixjury.sandbox.proxy import AllowlistProxy, proxy_environment
 from fixjury.sandbox.tools import TRUNCATION_MARKERS, exec_command
 
 LOGGER = logging.getLogger(__name__)
@@ -92,25 +92,6 @@ def exposes_secret(diff: str, key: str) -> bool:
     """
 
     return bool(key) and key in diff
-
-
-def proxy_environment(proxy_url: str) -> dict[str, str]:
-    """Every egress variable points at the proxy, and none of them is an exception.
-
-    An empty ``NO_PROXY`` is deliberate. Excluding localhost would only make sense
-    if the sandbox had something local worth reaching, and it does not; worse, it
-    silently bypasses the proxy whenever the model endpoint is self-hosted on the
-    host's loopback, which turns a working run into a connection error.
-    """
-
-    return {
-        "HTTP_PROXY": proxy_url,
-        "HTTPS_PROXY": proxy_url,
-        "http_proxy": proxy_url,
-        "https_proxy": proxy_url,
-        "NO_PROXY": "",
-        "no_proxy": "",
-    }
 
 
 @dataclass(frozen=True)
