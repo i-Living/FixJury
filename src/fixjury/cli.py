@@ -31,7 +31,7 @@ from fixjury.tasks.cli import app as tasks_app
 from fixjury.tasks.loader import read_task, task_path
 from fixjury.verify.runner import VerificationError
 from fixjury.verify.service import VerifyError, verify_run
-from fixjury.worker import WorkerError, redis_client, work_once
+from fixjury.worker import WorkerError, acknowledge, redis_client, work_once
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 app.add_typer(tasks_app, name="tasks")
@@ -262,6 +262,8 @@ def worker(
                         typer.echo(f"dropped a delivery: {exc}", err=True)
                         continue
                 if row is not None:
+                    # Committed: the id can leave ``processing`` without losing the run.
+                    await acknowledge(client, row.id)
                     typer.echo(
                         f"run {row.id} {row.status.value} agent={row.agent} "
                         f"attempt={row.attempt} diff={len(row.diff or '')}B"

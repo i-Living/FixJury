@@ -63,6 +63,10 @@ async def process_run(
     — a stale duplicate left in Redis, or a second worker — cannot both execute it,
     and the loser backs off without blocking on a run that takes minutes. It leaves the
     id where it found it, so a worker that dies still leaves a recoverable orphan.
+
+    This does not acknowledge the queue: ``acknowledge`` runs once the caller's
+    transaction has committed, so a crash in between leaves the id in ``processing``
+    for ``resume`` instead of leaving a run nothing will ever pick up again.
     """
 
     try:
@@ -103,8 +107,6 @@ async def process_run(
         run.status = RunStatus.infra_failed
         run.finished_at = datetime.now(UTC)
         await session.flush()
-    finally:
-        await queue.complete(client, str(run_id))
 
     if run.status is RunStatus.infra_failed:
         retry = queue.next_attempt(run.attempt)
@@ -118,6 +120,18 @@ async def process_run(
                 # kill the worker: the row is the record, the queue is transport.
                 LOGGER.warning("no retry queued for %s: %s", run.id, exc)
     return run
+
+
+async def acknowledge(client: queue.RedisList, run_id: uuid.UUID | str) -> None:
+    """Drop a settled run's id from ``processing`` — after its transaction commits.
+
+    Acknowledging before the commit is the one ordering that loses work: the process
+    dies, the database rolls back to a run that never settled, and Redis no longer has
+    the id, so ``resume`` has nothing to recover. Committing first turns that crash into
+    a duplicate delivery instead, which the row lock and ``finished_at`` both survive.
+    """
+
+    await queue.complete(client, str(run_id))
 
 
 async def work_once(

@@ -22,7 +22,7 @@ from fixjury.models import Run, RunStatus
 from fixjury.run import ensure_task
 from fixjury.tasks.loader import read_index, read_task, task_path
 from fixjury.verify.service import VerifyError, verify_run
-from fixjury.worker import WorkerError, work_once
+from fixjury.worker import WorkerError, acknowledge, work_once
 
 LOGGER = logging.getLogger(__name__)
 
@@ -143,6 +143,8 @@ async def drain(
                 continue
             if row is None:
                 break
+            # The run has settled in the database: only now may its id leave the queue.
+            await acknowledge(client, row.id)
             summary.record(row)
             if verify and row.status is RunStatus.finished:
                 try:
