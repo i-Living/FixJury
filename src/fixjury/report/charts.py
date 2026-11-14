@@ -182,7 +182,9 @@ def corpus_split(payload: Mapping[str, object]) -> dict[str, float]:
     """
 
     numbers = _numbers(payload)
-    pairs = numbers.get("pairs")
+    # Reviewed, not finished: an unreviewed pair is unknown, and drawing it as
+    # "not accepted" would turn the review backlog into a failure rate.
+    pairs = numbers.get("reviewed_pairs")
     accepted = numbers.get("accepted")
     clean = numbers.get("regression_free_accepted")
     total = float(pairs) if isinstance(pairs, int | float) and pairs else 0.0

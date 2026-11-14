@@ -8,6 +8,7 @@ from fixjury.report.markdown import render_agent_table, render_report
 
 DENOMINATORS: dict[str, object] = {
     "pairs": 10,
+    "reviewed_pairs": 10,
     "accepted": 4,
     "regression_free_accepted": 3,
     "automated_pass_pairs": 6,
@@ -47,6 +48,28 @@ def test_the_table_row_carries_every_headline_number() -> None:
     assert "0.4000" in row
     assert "42.50 s" in row
     assert "50.0%" in row
+
+
+def test_an_unreviewed_corpus_reports_null_acceptance() -> None:
+    """A pair nobody reviewed is unknown, not rejected: the row must say null."""
+
+    payload: dict[str, object] = {
+        **PAYLOAD,
+        "denominators": {**DENOMINATORS, "reviewed_pairs": 0, "accepted": 0},
+        "metrics": {
+            **METRICS,
+            "human_acceptance_rate": None,
+            "human_acceptance_ci": None,
+            "regression_free_acceptance_rate": None,
+            "regression_free_acceptance_ci": None,
+            "false_completion_rate": None,
+        },
+    }
+
+    row = render_agent_table(payload)
+
+    assert row.startswith("| baseline | null | null | null | 60.0% | 0/0 |")
+    assert "0.0%" not in row.split("|")[2]
 
 
 def test_a_null_cost_is_rendered_as_null_not_zero() -> None:

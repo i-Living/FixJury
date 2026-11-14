@@ -8,6 +8,7 @@ from fixjury.report.charts import corpus_split, render_charts, render_regression
 
 DENOMINATORS: dict[str, object] = {
     "pairs": 10,
+    "reviewed_pairs": 10,
     "accepted": 4,
     "regression_free_accepted": 3,
     "automated_pass_pairs": 6,
@@ -75,7 +76,7 @@ def test_the_corpus_split_is_computed_once_and_adds_up_to_one() -> None:
 
 
 def test_a_zero_denominator_gives_an_empty_split_not_a_division_error() -> None:
-    payload = {**PAYLOAD, "denominators": {**DENOMINATORS, "pairs": 0}}
+    payload = {**PAYLOAD, "denominators": {**DENOMINATORS, "pairs": 0, "reviewed_pairs": 0}}
 
     assert set(corpus_split(payload).values()) == {0.0}
 

@@ -20,8 +20,26 @@ from pathlib import Path
 
 import yaml
 
+from fixjury.config import settings
+
 LOGGER = logging.getLogger(__name__)
 UNPRICED = "unpriced"
+
+
+def pricing() -> Pricing:
+    """Pricing is configuration: a broken file must not crash a run.
+
+    It lives here rather than next to the run so that the queue can stamp the
+    version a queued run will be priced under without importing the run machinery.
+    """
+
+    try:
+        return load_pricing(Path(settings.pricing_file))
+    except PricingError as exc:
+        LOGGER.warning("pricing file unusable, costing nothing: %s", exc)
+        return Pricing(version=UNPRICED, currency="USD", models={})
+
+
 MICRO = Decimal("1000000")
 SECONDS_PER_HOUR = Decimal("3600")
 
@@ -44,12 +62,18 @@ class Pricing:
     sandbox_per_hour: Decimal = Decimal("0")
 
     def price_for(self, model: str) -> ModelPrice:
-        """A model without a price is priced at zero, and that is logged."""
+        """A model without a price is priced at zero, and that is logged.
+
+        The warning matters more than the zero: a model missing from the file would
+        otherwise report a cost of nothing, which reads as "free" rather than as
+        "unpriced".
+        """
 
         if model in self.models:
             return self.models[model]
         if "default" in self.models:
             return self.models["default"]
+        LOGGER.warning("no list price for model %r under pricing %s", model, self.version)
         return ModelPrice()
 
     def list_price(

@@ -1,12 +1,22 @@
 # List prices used to compute `runs.cost_list_usd` (PLAN §3.2.1).
 #
-# Every rate is zero on purpose: FixJury runs on a flat subscription, so there is
-# no per-run invoice, and inventing a rate would put a made-up number in a column
-# that looks authoritative. Fill these in from a provider price list before
-# publishing any cost figure, and bump `version` when you do — rows computed with
-# different versions are not comparable and the report must label the basis.
-version: unpriced-2026-11
+# Source: https://opencode.ai/docs/console/go/ — the Go plan's token table, per 1M
+# tokens. Rates are pinned here on purpose: a price that moves silently would make
+# two reports look comparable when they are not, so `version` names the day the
+# rates were copied and rows computed under different versions must be labelled.
+#
+# DeepSeek V4.1 Flash is metered at two rates, $0.15/$0.60 off-peak and $0.30/$1.20
+# at peak. The peak rate is pinned so `list_price` is an upper bound rather than an
+# understatement; a run that lands in off-peak costs half of what is shown.
+#
+# The sandbox rate is zero because the runs execute on the owner's own machine and
+# there is no invoice for those seconds. Renting that machine out is what would give
+# this number a real value; until then `amortized` is the only money column.
+version: opencode-go-2026-11-13
 currency: USD
-models: {}
+models:
+  deepseek-v4.1-flash:
+    input_per_mtok: 0.30
+    output_per_mtok: 1.20
 sandbox:
   per_hour: 0

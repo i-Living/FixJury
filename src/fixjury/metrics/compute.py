@@ -27,6 +27,7 @@ class Attempt:
     tokens_out: int = 0
     cost_list_usd: Decimal = Decimal("0")
     diff_sha256: str | None = None
+    has_diff: bool = False
     duration_s: float | None = None
     automated_pass: bool | None = None
     heldout_pass: bool | None = None
@@ -35,9 +36,14 @@ class Attempt:
 
     @property
     def finished(self) -> bool:
-        """A run that reached the end with something to verify."""
+        """A run that reached the end, patch or no patch.
 
-        return self.status == "finished" and bool(self.diff_sha256)
+        A no-op is a result: an agent that returns nothing failed the pair, and
+        dropping it from the denominator would make it look better than one that
+        tried and broke something.
+        """
+
+        return self.status == "finished"
 
 
 @dataclass(frozen=True)
@@ -52,21 +58,23 @@ class MetricsReport:
 
     agent: str
     pairs: int
+    reviewed_pairs: int
     accepted: int
     regression_free_accepted: int
     automated_pass_pairs: int
     declared_success_runs: int
     tokens_total: int
     cost_total: Decimal
-    human_acceptance_rate: float
+    human_acceptance_rate: float | None
     human_acceptance_ci: Interval | None
-    regression_free_acceptance_rate: float
+    regression_free_acceptance_rate: float | None
     regression_free_acceptance_ci: Interval | None
     task_success_rate: float
     tokens_per_accepted_fix: Decimal | None
     cost_per_accepted_fix: Decimal | None
     median_time_to_repair_s: float | None
     false_completion_rate: float | None
+    no_patch_pairs: int
     missing_heldout_pairs: int
     exclusions: dict[str, int] = field(default_factory=dict)
 
@@ -125,9 +133,17 @@ def compute_metrics(attempts: Sequence[Attempt], *, agent: str) -> MetricsReport
         task_id: runs for task_id, runs in grouped.items() if any(run.finished for run in runs)
     }
     pairs = len(finished_pairs)
-    accepted_runs = [run for runs in finished_pairs.values() for run in runs if _is_accepted(runs)]
-    accepted_pairs = sum(1 for runs in finished_pairs.values() if _is_accepted(runs))
-    regression_free = sum(1 for runs in finished_pairs.values() if _is_regression_free(runs))
+    # Acceptance is a statement about reviewed patches. Counting an unreviewed pair
+    # as "not accepted" would report the review backlog as a failure rate.
+    reviewed_pairs = {
+        task_id: runs
+        for task_id, runs in finished_pairs.items()
+        if any(run.human_verdict is not None for run in runs)
+    }
+    reviewed = len(reviewed_pairs)
+    accepted_runs = [run for runs in reviewed_pairs.values() for run in runs if _is_accepted(runs)]
+    accepted_pairs = sum(1 for runs in reviewed_pairs.values() if _is_accepted(runs))
+    regression_free = sum(1 for runs in reviewed_pairs.values() if _is_regression_free(runs))
     automated = sum(1 for runs in finished_pairs.values() if _is_automated_pass(runs))
 
     all_runs = [run for runs in finished_pairs.values() for run in runs]
@@ -136,8 +152,12 @@ def compute_metrics(attempts: Sequence[Attempt], *, agent: str) -> MetricsReport
 
     declared = [run for run in all_runs if run.declared_success is not None]
     declared_positive = [run for run in declared if run.declared_success is True]
+    # "False completion" is a claim a reviewer checked, so it is bounded by the
+    # reviewed pairs too; an unreviewed claim is neither true nor false yet.
+    reviewed_runs = [run for runs in reviewed_pairs.values() for run in runs]
+    checked_claims = [run for run in reviewed_runs if run.declared_success is True]
     false_completions = [
-        run for run in declared_positive if not _is_accepted(finished_pairs.get(run.task_id, []))
+        run for run in checked_claims if not _is_accepted(reviewed_pairs[run.task_id])
     ]
 
     accepted_durations = [run.duration_s for run in accepted_runs if run.duration_s is not None]
@@ -155,10 +175,13 @@ def compute_metrics(attempts: Sequence[Attempt], *, agent: str) -> MetricsReport
         declared_success_runs=len(declared_positive),
         tokens_total=tokens_total,
         cost_total=cost_total,
-        human_acceptance_rate=accepted_pairs / pairs if pairs else 0.0,
-        human_acceptance_ci=wilson_interval(accepted_pairs, pairs),
-        regression_free_acceptance_rate=regression_free / pairs if pairs else 0.0,
-        regression_free_acceptance_ci=wilson_interval(regression_free, pairs),
+        reviewed_pairs=reviewed,
+        human_acceptance_rate=accepted_pairs / reviewed if reviewed else None,
+        human_acceptance_ci=wilson_interval(accepted_pairs, reviewed) if reviewed else None,
+        regression_free_acceptance_rate=regression_free / reviewed if reviewed else None,
+        regression_free_acceptance_ci=wilson_interval(regression_free, reviewed)
+        if reviewed
+        else None,
         task_success_rate=automated / pairs if pairs else 0.0,
         tokens_per_accepted_fix=(
             (Decimal(tokens_total) / Decimal(accepted_pairs)).quantize(Decimal("0.01"))
@@ -173,12 +196,19 @@ def compute_metrics(attempts: Sequence[Attempt], *, agent: str) -> MetricsReport
         ),
         median_time_to_repair_s=median(accepted_durations),
         false_completion_rate=(
-            len(false_completions) / len(declared_positive) if declared_positive else None
+            len(false_completions) / len(checked_claims) if checked_claims else None
+        ),
+        # Two different gaps, counted apart: a pair with no patch cannot have a
+        # held-out result, while a pair with a patch and no held-out result is a
+        # defect in the run.
+        no_patch_pairs=sum(
+            1 for runs in finished_pairs.values() if not any(run.has_diff for run in runs)
         ),
         missing_heldout_pairs=sum(
             1
             for runs in finished_pairs.values()
-            if any(run.heldout_pass is None for run in runs)
+            if any(run.has_diff for run in runs)
+            and all(run.heldout_pass is None for run in runs if run.has_diff)
             and not any(run.heldout_pass is True for run in runs)
         ),
         exclusions=exclusions,
@@ -196,10 +226,12 @@ def as_payload(
         "pricing_version": pricing_version,
         "denominators": {
             "pairs": report.pairs,
+            "reviewed_pairs": report.reviewed_pairs,
             "accepted": report.accepted,
             "regression_free_accepted": report.regression_free_accepted,
             "automated_pass_pairs": report.automated_pass_pairs,
             "declared_success_runs": report.declared_success_runs,
+            "no_patch_pairs": report.no_patch_pairs,
             "missing_heldout_pairs": report.missing_heldout_pairs,
         },
         "exclusions": report.exclusions,

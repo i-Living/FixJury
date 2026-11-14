@@ -23,9 +23,11 @@ export type Metrics = {
 
 export type Denominators = {
   pairs: number;
+  reviewed_pairs: number;
   accepted: number;
   regression_free_accepted: number;
   automated_pass_pairs: number;
+  no_patch_pairs: number;
   declared_success_runs: number;
   missing_heldout_pairs: number;
 };

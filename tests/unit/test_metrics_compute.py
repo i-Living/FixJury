@@ -18,6 +18,7 @@ def attempt(task_id: str, **kwargs: object) -> Attempt:
         "agent": "baseline",
         "status": "finished",
         "diff_sha256": "a" * 64,
+        "has_diff": True,
         "tokens_in": 100,
         "tokens_out": 50,
         "automated_pass": True,
@@ -32,7 +33,8 @@ def test_an_empty_corpus_is_not_a_division_by_zero() -> None:
     report = compute_metrics([], agent="baseline")
 
     assert report.pairs == 0
-    assert report.human_acceptance_rate == 0.0
+    # An empty corpus has no acceptance rate; zero would claim that nothing passed review.
+    assert report.human_acceptance_rate is None
     assert report.human_acceptance_ci is None
     assert report.tokens_per_accepted_fix is None
     assert report.cost_per_accepted_fix is None
@@ -61,10 +63,17 @@ def test_an_infra_failed_run_is_not_an_attempt() -> None:
     assert report.exclusions == {"infra_failed": 1}
 
 
-def test_a_finished_run_without_a_diff_is_not_an_attempt() -> None:
-    report = compute_metrics([attempt("T-1", diff_sha256=None)], agent="baseline")
+def test_a_finished_run_without_a_diff_counts_as_a_failed_pair() -> None:
+    """A no-op is a result: leaving it out would make a silent agent look better."""
 
-    assert report.pairs == 0
+    report = compute_metrics(
+        [attempt("T-1", diff_sha256=None, has_diff=False, heldout_pass=None)], agent="baseline"
+    )
+
+    assert report.pairs == 1
+    assert report.no_patch_pairs == 1
+    # A pair with no patch cannot have a held-out result, and that is not a defect.
+    assert report.missing_heldout_pairs == 0
 
 
 def test_acceptance_counts_pairs_with_any_accepted_attempt() -> None:

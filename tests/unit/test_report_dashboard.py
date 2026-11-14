@@ -17,6 +17,7 @@ from fixjury.report.dashboard import (
 
 DENOMINATORS: dict[str, object] = {
     "pairs": 10,
+    "reviewed_pairs": 10,
     "accepted": 4,
     "regression_free_accepted": 3,
     "automated_pass_pairs": 6,

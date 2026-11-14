@@ -165,6 +165,7 @@ These are load-bearing. Breaking one silently invalidates published numbers.
 - **Tool versions change verdicts.** Pin ruff/mypy/pytest per task and store `tool_versions` on the verdict; an unpinned upgrade silently rewrites history.
 - **Blind review leaks through metadata.** Patch metadata, commit messages, code comments and PR-style formatting can reveal the agent, so packaging strips names and normalizes headers before review.
 - **A zero denominator is not zero cost.** `cost_per_accepted_fix` is `null`, not `0`, when nothing was accepted; the report must show `null`.
+- **An unreviewed pair is unknown, not rejected.** Acceptance and `false_completion_rate` divide by reviewed pairs only, and are `null` until the first verdict exists: dividing by all pairs turns the review backlog into a failure rate.
 
 ## Review bot
 

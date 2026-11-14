@@ -17,6 +17,7 @@ from typing import Protocol
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fixjury.metrics.cost import pricing
 from fixjury.models import Run, RunStatus
 
 QUEUED_KEY = "fixjury:runs:queued"
@@ -82,7 +83,10 @@ async def enqueue(
         status=RunStatus.queued,
         tokens_in=0,
         tokens_out=0,
-        pricing_version="unpriced",
+        # The version the run will be priced under is already decided, so record it
+        # now: a placeholder here leaks into the snapshot's label while the run is
+        # still queued.
+        pricing_version=pricing().version,
         config_hash="0" * 64,
     )
     session.add(row)
