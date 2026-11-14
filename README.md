@@ -153,6 +153,7 @@ Estimates are planning targets for evenings, not commitments.
 ## Documentation
 
 - [`docs/PLAN.md`](docs/PLAN.md) — specification, data model, metric definitions, phased plan (Russian).
+- [`docs/USAGE.md`](docs/USAGE.md) — operator guide: install, run, verify, blind review, metrics, report, export (Russian).
 - [`idea.md`](idea.md) — original concept note (Russian).
 - [`AGENTS.md`](AGENTS.md) — invariants, conventions and pitfalls for anyone (human or agent) changing this code.
 

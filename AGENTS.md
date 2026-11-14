@@ -6,7 +6,7 @@ Engineering rules for FixJury. Read this before changing anything in the repo. H
 
 FixJury measures whether autonomous coding agents actually fix defects: it runs several agents on identical frozen repair tasks, verifies their patches in isolated containers, collects blind human verdicts, and reports acceptance, regressions, time and cost per accepted fix.
 
-**Current stage: spec only.** No toolchain, no schema, no code. The authoritative design is [`docs/PLAN.md`](docs/PLAN.md); the public summary is [`README.md`](README.md). If this file disagrees with `docs/PLAN.md`, `docs/PLAN.md` wins and this file gets fixed in the same change.
+**Current stage: implemented through phase 7, benchmark run pending.** The toolchain, schema, CI, a 32-task frozen corpus and every command below exist and run; baseline and mini have completed their 64 pairs. Outstanding: the OpenHands image for the 96-pair grid, the 96 human verdicts, and the deployment of the metrics page. The authoritative design is [`docs/PLAN.md`](docs/PLAN.md), the operator guide is [`docs/USAGE.md`](docs/USAGE.md); the public summary is [`README.md`](README.md). If this file disagrees with `docs/PLAN.md`, `docs/PLAN.md` wins and this file gets fixed in the same change.
 
 ## Stack
 
@@ -88,6 +88,7 @@ benchmarks/heldout/T-xxx/  held-out tests + reference.patch, mounted only in ver
 web/                       read-only metrics page: Next.js app, static export, charts via Chart.js
 tests/unit, tests/integration
 docs/PLAN.md               spec + plan
+docs/USAGE.md              operator guide: install, run, verify, review, report, export (Russian)
 docs/plans/                one plan + checkpoint per phase
 ```
 
