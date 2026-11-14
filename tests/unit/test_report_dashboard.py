@@ -55,21 +55,22 @@ def test_the_export_carries_one_record_per_agent_in_agent_order() -> None:
         generated_at="2026-11-13 09:00 UTC",
     )
 
+    # Passed through untouched: the snapshot computed the split, the export sorts agents.
     assert data["agents"] == [
-        {
-            **PAYLOAD,
-            "agent": "aaa-agent",
-            "split": {"regression_free": 0.3, "with_regression": 0.1, "not_accepted": 0.6},
-        },
-        {**PAYLOAD, "split": {"regression_free": 0.3, "with_regression": 0.1, "not_accepted": 0.6}},
-        {
-            **PAYLOAD,
-            "agent": "swe-agent",
-            "split": {"regression_free": 0.3, "with_regression": 0.1, "not_accepted": 0.6},
-        },
+        {**PAYLOAD, "agent": "aaa-agent"},
+        {**PAYLOAD},
+        {**PAYLOAD, "agent": "swe-agent"},
     ]
     assert data["generated_at"] == "2026-11-13 09:00 UTC"
     assert data["basis"] == "list_price"
+
+
+def test_the_export_carries_the_split_the_snapshot_stored() -> None:
+    split = {"regression_free": 0.3, "with_regression": 0.1, "not_accepted": 0.6}
+
+    data = dashboard_data([{**PAYLOAD, "split": split}])
+
+    assert data["agents"][0]["split"] == split
 
 
 def test_the_export_keeps_a_null_denominator_as_null() -> None:

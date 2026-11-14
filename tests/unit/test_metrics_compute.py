@@ -40,6 +40,54 @@ def test_an_empty_corpus_is_not_a_division_by_zero() -> None:
     assert report.cost_per_accepted_fix is None
 
 
+def test_the_corpus_split_is_computed_here_and_adds_up_to_one() -> None:
+    """The page and the charts read these shares; nothing downstream may compute them."""
+
+    report = compute_metrics(
+        [
+            attempt("T-1", human_verdict="accept", heldout_pass=True, policy_pass=True),
+            attempt("T-2", human_verdict="accept", heldout_pass=False, policy_pass=True),
+            attempt("T-3", human_verdict="reject"),
+            attempt("T-4", human_verdict="reject"),
+        ],
+        agent="baseline",
+    )
+
+    payload = as_payload(report, cost_basis="list_price", pricing_version="v")
+    split = payload["split"]
+
+    assert split == {"regression_free": 0.25, "with_regression": 0.25, "not_accepted": 0.5}
+    assert sum(split.values()) == pytest.approx(1.0)
+
+
+def test_a_corpus_with_nothing_reviewed_has_a_null_split_not_a_zero_one() -> None:
+    """Zero would say every pair failed review; nothing has been reviewed at all."""
+
+    report = compute_metrics([attempt("T-1", human_verdict=None)], agent="baseline")
+
+    split = as_payload(report, cost_basis="list_price", pricing_version="v")["split"]
+
+    assert split == {"regression_free": None, "with_regression": None, "not_accepted": None}
+
+
+def test_more_regression_free_acceptances_than_acceptances_is_clamped() -> None:
+    report = compute_metrics(
+        [
+            attempt("T-1", human_verdict="accept", heldout_pass=True, policy_pass=True),
+            # Accepted by the reviewer but not regression-free, so the counts disagree:
+            # the clean share must be clamped to the accepted one, not exceed it.
+            attempt("T-2", human_verdict="reject", heldout_pass=True, policy_pass=True),
+        ],
+        agent="baseline",
+    )
+
+    split = as_payload(report, cost_basis="list_price", pricing_version="v")["split"]
+
+    assert split["regression_free"] == pytest.approx(0.5)
+    assert split["with_regression"] == 0.0
+    assert sum(split.values()) == pytest.approx(1.0), "a stack that ends past 100% is a lie"
+
+
 def test_a_pair_is_a_task_not_an_attempt() -> None:
     report = compute_metrics(
         [

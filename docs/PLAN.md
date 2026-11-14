@@ -238,7 +238,7 @@ PostgreSQL, SQLAlchemy 2.0, Alembic. Шесть таблиц.
 
 **`review_batches`** — `id` text PK, `task_id` FK, `run_ids` uuid[], `order_seed` bigint, `pass_no` smallint (1 — первый проход, 2 — повторный через ≥3 дня), `created_at`, `reviewer` text.
 
-**`metric_snapshots`** — `id` uuid PK, `computed_at`, `agent` text, `cost_basis` enum(list_price|amortized), `config_hash` char(64), `payload` jsonb (все метрики + CI + счётчики исключений).
+**`metric_snapshots`** — `id` uuid PK, `computed_at`, `agent` text, `cost_basis` enum(list_price|amortized), `config_hash` char(64), `payload` jsonb (все метрики + CI + счётчики исключений + `split`: доли `regression_free` / `with_regression` / `not_accepted` от `reviewed_pairs`). Доли считаются в `src/fixjury/metrics/`, отчёт, графики и страница их только читают; при `reviewed_pairs = 0` — `null`, а не `0.0`.
 
 ## 8. RepairSpec и корпус задач
 

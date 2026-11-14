@@ -174,34 +174,22 @@ def render_charts(payloads: Sequence[Mapping[str, object]], out_dir: Path) -> di
     return charts
 
 
-def corpus_split(payload: Mapping[str, object]) -> dict[str, float]:
-    """How the pairs of one agent end up: shares that add up to 1, or all zeros.
+SPLIT_KEYS = ("regression_free", "with_regression", "not_accepted")
 
-    The one piece of arithmetic the charts need, in one place, so the PNG report and
-    the metrics page cannot disagree about it.
+
+def corpus_split(payload: Mapping[str, object]) -> dict[str, float | None]:
+    """The split the snapshot already computed: the charts draw it, they do not divide.
+
+    ``None`` means the snapshot had no reviewed pair. Drawing it as 0% would report a
+    rate nobody measured, so a chart leaves the agate bar out instead.
     """
 
-    numbers = _numbers(payload)
-    # Reviewed, not finished: an unreviewed pair is unknown, and drawing it as
-    # "not accepted" would turn the review backlog into a failure rate.
-    pairs = numbers.get("reviewed_pairs")
-    accepted = numbers.get("accepted")
-    clean = numbers.get("regression_free_accepted")
-    total = float(pairs) if isinstance(pairs, int | float) and pairs else 0.0
-    if total <= 0:
-        return {"regression_free": 0.0, "with_regression": 0.0, "not_accepted": 0.0}
-    # A regression-free acceptance is a subset of an acceptance, and neither can
-    # outrun the pairs: clamp, so a broken snapshot cannot draw a stack past 100%.
-    accepted_count = min(
-        max(float(accepted) if isinstance(accepted, int | float) else 0.0, 0.0), total
-    )
-    clean_count = min(
-        max(float(clean) if isinstance(clean, int | float) else 0.0, 0.0), accepted_count
-    )
+    block = payload.get("split")
+    if not isinstance(block, Mapping):
+        return dict.fromkeys(SPLIT_KEYS)
     return {
-        "regression_free": clean_count / total,
-        "with_regression": (accepted_count - clean_count) / total,
-        "not_accepted": (total - accepted_count) / total,
+        key: float(block[key]) if isinstance(block.get(key), int | float) else None
+        for key in SPLIT_KEYS
     }
 
 
@@ -210,22 +198,42 @@ def render_regression_split(payloads: Sequence[Mapping[str, object]], out_dir: P
 
     labels = [str(payload.get("agent", "?")) for payload in payloads]
     splits = [corpus_split(payload) for payload in payloads]
-    top = [split["regression_free"] for split in splits]
-    middle = [split["with_regression"] for split in splits]
-    bottom = [split["not_accepted"] for split in splits]
+    # A snapshot without a reviewed pair has no split to draw; its bar is a gap.
+    measured = [split for split in splits if None not in split.values()]
+    top = [split["regression_free"] or 0.0 for split in measured]
+    middle = [split["with_regression"] or 0.0 for split in measured]
+    bottom = [split["not_accepted"] or 0.0 for split in measured]
 
     figure, axes = plt.subplots(figsize=(6.4, 3.4), dpi=160)
+    measured_positions = [index for index, split in enumerate(splits) if None not in split.values()]
     positions = list(range(len(labels)))
-    axes.bar(positions, top, color=GOOD, width=0.55, label="accepted, regression-free")
-    axes.bar(positions, middle, bottom=top, color=CAUTION, width=0.55, label="accepted, regression")
+    axes.bar(measured_positions, top, color=GOOD, width=0.55, label="accepted, regression-free")
     axes.bar(
-        positions,
+        measured_positions,
+        middle,
+        bottom=top,
+        color=CAUTION,
+        width=0.55,
+        label="accepted, regression",
+    )
+    axes.bar(
+        measured_positions,
         bottom,
         bottom=[a + b for a, b in zip(top, middle, strict=True)],
         color=BAD,
         width=0.55,
         label="not accepted",
     )
+    for index, split in enumerate(splits):
+        if None in split.values():
+            axes.annotate(
+                "null",
+                (index, 0.02),
+                ha="center",
+                va="bottom",
+                fontsize=8,
+                color=MUTED,
+            )
     # Labels carry the meaning too: colour alone is not an accessible encoding.
     for position, (clean, regressed, missed) in enumerate(zip(top, middle, bottom, strict=True)):
         cursor = 0.0

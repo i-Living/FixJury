@@ -53,6 +53,19 @@ class Interval:
 
 
 @dataclass(frozen=True)
+class CorpusSplit:
+    """Where the reviewed pairs end up: three shares that add up to 1, or nothing at all.
+
+    ``None`` is not zero here: a snapshot with no reviewed pair says "unknown", and a
+    chart that drew 0% would state a rate nobody measured.
+    """
+
+    regression_free: float | None
+    with_regression: float | None
+    not_accepted: float | None
+
+
+@dataclass(frozen=True)
 class MetricsReport:
     """Everything §3.2 asks for, plus the denominators that explain it."""
 
@@ -76,7 +89,26 @@ class MetricsReport:
     false_completion_rate: float | None
     no_patch_pairs: int
     missing_heldout_pairs: int
+    split: CorpusSplit
     exclusions: dict[str, int] = field(default_factory=dict)
+
+
+def corpus_split(reviewed: int, accepted: int, regression_free: int) -> CorpusSplit:
+    """The share of reviewed pairs that ended clean, regressed, or unaccepted.
+
+    Trust the pairs, not the counters: a snapshot cannot describe more acceptances than
+    it has pairs, and a regression-free acceptance is a subset of an acceptance.
+    """
+
+    if reviewed <= 0:
+        return CorpusSplit(None, None, None)
+    accepted_count = min(max(accepted, 0), reviewed)
+    clean_count = min(max(regression_free, 0), accepted_count)
+    return CorpusSplit(
+        regression_free=clean_count / reviewed,
+        with_regression=(accepted_count - clean_count) / reviewed,
+        not_accepted=(reviewed - accepted_count) / reviewed,
+    )
 
 
 def wilson_interval(successes: int, total: int, z: float = Z_95) -> Interval | None:
@@ -243,12 +275,13 @@ def compute_metrics(attempts: Sequence[Attempt], *, agent: str) -> MetricsReport
         missing_heldout_pairs=sum(
             1 for runs in finished_pairs.values() if _heldout_is_missing(runs)
         ),
+        split=corpus_split(reviewed, accepted_pairs, regression_free),
         exclusions=exclusions,
     )
 
 
 def as_payload(
-    report: MetricsReport, *, cost_basis: str, pricing_version: str
+    report: MetricsReport, *, cost_basis: str, pricing_version: str | None
 ) -> dict[str, object]:
     """The JSONB payload of a ``metric_snapshots`` row."""
 
@@ -265,6 +298,12 @@ def as_payload(
             "declared_success_runs": report.declared_success_runs,
             "no_patch_pairs": report.no_patch_pairs,
             "missing_heldout_pairs": report.missing_heldout_pairs,
+        },
+        # Computed here and nowhere else: the report, the charts and the page read it.
+        "split": {
+            "regression_free": report.split.regression_free,
+            "with_regression": report.split.with_regression,
+            "not_accepted": report.split.not_accepted,
         },
         "exclusions": report.exclusions,
         "metrics": {

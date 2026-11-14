@@ -51,6 +51,8 @@ PAYLOADS: list[dict[str, object]] = [
             "tokens_total": 3000,
             "cost_total": "1.0000",
         },
+        # 1 clean of 4 reviewed, 2 accepted: the shares the snapshot would store.
+        "split": {"regression_free": 0.25, "with_regression": 0.25, "not_accepted": 0.5},
     },
     {
         "agent": "fixture-null-agent",
@@ -80,6 +82,8 @@ PAYLOADS: list[dict[str, object]] = [
             "tokens_total": 0,
             "cost_total": "0.0000",
         },
+        # Nothing was reviewed, so the split is unknown: null, never 0.0.
+        "split": {"regression_free": None, "with_regression": None, "not_accepted": None},
     },
 ]
 

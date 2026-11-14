@@ -32,16 +32,17 @@ export type Denominators = {
   missing_heldout_pairs: number;
 };
 
+/** A share of reviewed pairs, or null when nothing was reviewed: null is not zero. */
 export type Split = {
-  regression_free: number;
-  with_regression: number;
-  not_accepted: number;
+  regression_free: number | null;
+  with_regression: number | null;
+  not_accepted: number | null;
 };
 
 export type AgentSnapshot = {
   agent: string;
   cost_basis: string;
-  pricing_version: string;
+  pricing_version: string | null;
   denominators: Denominators;
   exclusions: Record<string, number>;
   metrics: Metrics;

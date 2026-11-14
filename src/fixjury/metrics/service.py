@@ -86,13 +86,14 @@ async def compute_snapshot(
     report = compute_metrics(attempts, agent=agent)
     # Only finished runs price anything. A queued row still carries the version it
     # will be priced under, but labelling the snapshot with it would announce a
-    # price that no run has paid yet.
+    # price that no run has paid yet — and with no finished run at all there is no
+    # price to label, so the payload says null rather than an empty string.
     priced = [(run, verdict) for run, verdict in rows if run.status is RunStatus.finished]
     pricing_versions = sorted({run.pricing_version for run, _ in priced})
     payload = as_payload(
         report,
         cost_basis=cost_basis.value,
-        pricing_version=",".join(pricing_versions),
+        pricing_version=",".join(pricing_versions) if pricing_versions else None,
     )
     snapshot = MetricSnapshot(
         id=uuid.uuid4(),

@@ -3,8 +3,8 @@
 Task 7.3 in the plan: a static, read-only page served by nginx. The page itself is a
 Next.js static export, so this module owns only what Python must own — the numbers it
 is allowed to draw. Nothing here recomputes a metric: the export carries the payload
-``metric_snapshots`` already stores, plus the corpus split from
-``fixjury.report.charts.corpus_split``, so the page and the PNG report cannot disagree.
+``metric_snapshots`` already stores, corpus split included, so the page and the PNG
+report cannot disagree.
 """
 
 from __future__ import annotations
@@ -17,8 +17,6 @@ import tempfile
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-
-from fixjury.report.charts import corpus_split
 
 DEFAULT_TITLE = "FixJury — agent repair benchmark"
 
@@ -49,10 +47,9 @@ def dashboard_data(
         "title": title,
         "basis": basis,
         "generated_at": stamp,
-        "agents": [
-            {**payload, "split": corpus_split(payload)}
-            for payload in sorted(payloads, key=lambda payload: str(payload.get("agent", "")))
-        ],
+        # The split arrives with the payload: the snapshot computed it, and this only
+        # sorts the agents.
+        "agents": sorted(payloads, key=lambda payload: str(payload.get("agent", ""))),
     }
 
 
