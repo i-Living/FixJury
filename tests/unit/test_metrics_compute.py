@@ -201,6 +201,25 @@ def test_a_pair_whose_heldout_never_ran_leaves_the_regression_free_rate() -> Non
     assert report.regression_free_acceptance_rate == 1.0
 
 
+def test_an_excluded_retry_is_not_evidence_about_the_pair() -> None:
+    """An ``infra_failed`` retry keeps the diff the agent made, but it was never verified.
+
+    Reading that diff as evidence turns a pair that produced no patch into a pair whose
+    held-out result went missing — two wrong counts from one defect.
+    """
+
+    report = compute_metrics(
+        [
+            attempt("T-1", has_diff=False, diff_sha256=None, heldout_pass=None),
+            attempt("T-2", status="infra_failed", has_diff=True, heldout_pass=None),
+        ],
+        agent="baseline",
+    )
+
+    assert report.no_patch_pairs == 1
+    assert report.missing_heldout_pairs == 0
+
+
 def test_false_completion_is_null_without_a_signal() -> None:
     report = compute_metrics([attempt("T-1", declared_success=None)], agent="baseline")
 

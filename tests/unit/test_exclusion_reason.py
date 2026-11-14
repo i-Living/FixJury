@@ -6,7 +6,12 @@ import pytest
 
 from fixjury.models import UNABLE_REASON_LENGTH, Run, RunStatus
 from fixjury.run import bounded_reason
-from fixjury.verify.service import _exclude
+from fixjury.verify.service import (
+    VERIFICATION_REASON_PREFIX,
+    _exclude,
+    _exclusion_reason,
+    _restore,
+)
 
 
 class FakeSession:
@@ -54,3 +59,41 @@ async def test_an_unbuildable_environment_excludes_the_run_with_a_reason() -> No
     assert run.status is RunStatus.infra_failed
     assert run.unable_reason == "verification failed: pip install -e . timed out"
     assert session.flushed is True
+
+
+def test_the_marker_survives_a_reason_longer_than_the_column() -> None:
+    """``_restore`` finds the exclusion by its prefix, so clipping must keep it."""
+
+    recorded = _exclusion_reason("fatal: unable to read tree " + "a" * 400)
+
+    assert recorded.startswith(VERIFICATION_REASON_PREFIX)
+    assert len(recorded) == UNABLE_REASON_LENGTH
+    assert recorded.endswith("a" * 20)
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_verifies_on_a_retry_leaves_the_exclusion() -> None:
+    """The second pass has a verdict, so the first pass's exclusion no longer applies."""
+
+    run = Run(task_id="T-010", agent="baseline", attempt=1)
+    run.status = RunStatus.infra_failed
+    run.unable_reason = "verification failed: sandbox did not start"
+
+    await _restore(FakeSession(), run)  # type: ignore[arg-type]
+
+    assert run.status is RunStatus.finished
+    assert run.unable_reason is None
+
+
+@pytest.mark.asyncio
+async def test_an_agent_reason_on_a_finished_run_is_left_alone() -> None:
+    """Only the exclusion this module writes is lifted."""
+
+    run = Run(task_id="T-010", agent="mini", attempt=1)
+    run.status = RunStatus.infra_failed
+    run.unable_reason = "model returned 429 after five retries"
+
+    await _restore(FakeSession(), run)  # type: ignore[arg-type]
+
+    assert run.status is RunStatus.infra_failed
+    assert run.unable_reason == "model returned 429 after five retries"

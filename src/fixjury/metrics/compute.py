@@ -101,6 +101,11 @@ def median(values: Sequence[float]) -> float | None:
     return (ordered[middle - 1] + ordered[middle]) / 2
 
 
+# An attempt that did not settle is not evidence about the pair: it has no verdict,
+# and ``infra_failed`` even keeps the diff the agent produced.
+EVIDENCE_EXCLUDED_STATUSES = frozenset({"infra_failed", "cancelled"})
+
+
 def _pairs(attempts: Sequence[Attempt]) -> dict[str, list[Attempt]]:
     """Group attempts by task: the denominator is pairs, never attempts."""
 
@@ -125,10 +130,26 @@ def _is_automated_pass(runs: Sequence[Attempt]) -> bool:
     return any(run.automated_pass is True for run in runs)
 
 
+def _evidence(runs: Sequence[Attempt]) -> list[Attempt]:
+    """The attempts that can speak for the pair.
+
+    An ``infra_failed`` attempt keeps whatever diff it produced — the exclusion happens
+    after the agent finished — but it was never verified, so reading its diff as
+    evidence makes a pair look like it had a patch and lost its held-out result. A
+    cancelled attempt is likewise not a result.
+    """
+
+    return [run for run in runs if run.status not in EVIDENCE_EXCLUDED_STATUSES]
+
+
+def _has_patch(runs: Sequence[Attempt]) -> bool:
+    return any(run.has_diff for run in _evidence(runs))
+
+
 def _heldout_is_missing(runs: Sequence[Attempt]) -> bool:
     """A patch exists and no held-out result does: the run's data is defective."""
 
-    with_diff = [run for run in runs if run.has_diff]
+    with_diff = [run for run in _evidence(runs) if run.has_diff]
     return bool(with_diff) and not any(run.heldout_pass is not None for run in with_diff)
 
 
@@ -218,9 +239,7 @@ def compute_metrics(attempts: Sequence[Attempt], *, agent: str) -> MetricsReport
         # Two different gaps, counted apart: a pair with no patch cannot have a
         # held-out result, while a pair with a patch and no held-out result is a
         # defect in the run.
-        no_patch_pairs=sum(
-            1 for runs in finished_pairs.values() if not any(run.has_diff for run in runs)
-        ),
+        no_patch_pairs=sum(1 for runs in finished_pairs.values() if not _has_patch(runs)),
         missing_heldout_pairs=sum(
             1 for runs in finished_pairs.values() if _heldout_is_missing(runs)
         ),

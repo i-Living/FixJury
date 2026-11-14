@@ -17,8 +17,8 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fixjury.config import settings
-from fixjury.models import Rejection, RejectionSource, Run, RunStatus, Verdict
-from fixjury.run import bounded_reason
+from fixjury.models import UNABLE_REASON_LENGTH, Rejection, RejectionSource, Run, RunStatus, Verdict
+from fixjury.run import RunError
 from fixjury.sandbox.container import SandboxError
 from fixjury.sandbox.tools import ToolError
 from fixjury.tasks.loader import read_task, task_path
@@ -28,6 +28,7 @@ from fixjury.verify.verdict import VerificationResult, assemble
 
 LOGGER = logging.getLogger(__name__)
 HELDOUT_DIRNAME = "heldout"
+VERIFICATION_REASON_PREFIX = "verification failed: "
 
 
 class VerifyError(RuntimeError):
@@ -72,17 +73,24 @@ async def verify_run(
                 image=image or settings.sandbox_image,
                 heldout_bundle=heldout_bundle,
             )
-        except (VerificationError, ToolError, SandboxError) as exc:
-            # An install step and the sandbox itself are not the run's fault, but the
-            # pair has no verdict all the same: record it as the exclusion it is,
-            # so the report can drop it with a reason instead of reading a data
-            # defect. The caller still sees one error type.
+        except (VerificationError, ToolError, SandboxError, RunError) as exc:
+            # An install step, a checkout that never finished and the sandbox itself
+            # are not the run's fault, but the pair has no verdict all the same: record
+            # it as the exclusion it is, so the report can drop it with a reason
+            # instead of reading a data defect. The caller still sees one error type —
+            # and one that ``bench`` catches, or a single unusable task ends the bench.
             await _exclude(session, run, reason=str(exc))
+            # Committed here, not by the caller: VerifyError is raised next, and the
+            # caller's session scope rolls back on any exception, which would take the
+            # exclusion reason with it. AGENTS.md requires every dropped run to keep
+            # its reason.
+            await session.commit()
             raise VerifyError(str(exc)) from exc
         finally:
             if not keep_workspace:
                 shutil.rmtree(workspace, ignore_errors=True)
 
+    await _restore(session, run)
     return await store_verdict(session, run_id, result)
 
 
@@ -94,7 +102,37 @@ async def _exclude(session: AsyncSession, run: Run, *, reason: str) -> None:
     """
 
     run.status = RunStatus.infra_failed
-    run.unable_reason = bounded_reason(f"verification failed: {reason}")
+    run.unable_reason = _exclusion_reason(reason)
+    await session.flush()
+
+
+def _exclusion_reason(reason: str) -> str:
+    """The recorded reason, with the marker ``_restore`` looks for kept in front.
+
+    ``bounded_reason`` keeps the tail of a long message and drops the head, which would
+    take the marker with it and leave the run looking permanently excluded.
+    """
+
+    detail = reason.strip()
+    budget = UNABLE_REASON_LENGTH - len(VERIFICATION_REASON_PREFIX)
+    if len(detail) > budget:
+        detail = f"…{detail[len(detail) - budget + 1 :]}"
+    return f"{VERIFICATION_REASON_PREFIX}{detail}"
+
+
+async def _restore(session: AsyncSession, run: Run) -> None:
+    """A run that verified on a retry is not an exclusion any more.
+
+    Only the exclusion this module writes is lifted: an agent's own ``unable_reason``
+    on a finished run says why the agent gave up, and that stays.
+    """
+
+    if run.status is not RunStatus.infra_failed:
+        return
+    if not (run.unable_reason or "").startswith(VERIFICATION_REASON_PREFIX):
+        return
+    run.status = RunStatus.finished
+    run.unable_reason = None
     await session.flush()
 
 
