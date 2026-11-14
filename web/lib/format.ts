@@ -5,12 +5,14 @@ import type { Interval } from "@/lib/data";
 
 export const NULL_TEXT = "null";
 
-export function percent(value: number | null): string {
-  return value === null ? NULL_TEXT : `${(value * 100).toFixed(1)}%`;
+export function percent(value: number | null | undefined): string {
+  return typeof value === "number" ? `${(value * 100).toFixed(1)}%` : NULL_TEXT;
 }
 
-export function interval(value: Interval | null): string {
-  return value === null ? NULL_TEXT : `${(value.low * 100).toFixed(1)}–${(value.high * 100).toFixed(1)}%`;
+export function interval(value: Interval | null | undefined): string {
+  return value
+    ? `${(value.low * 100).toFixed(1)}–${(value.high * 100).toFixed(1)}%`
+    : NULL_TEXT;
 }
 
 /** Numeric strings (tokens, cost) arrive as "1250.00"; show them with grouping. */
@@ -25,12 +27,15 @@ export function amount(value: string | number | null, decimals = 2): string {
     : String(value);
 }
 
-export function seconds(value: number | null): string {
-  return value === null ? NULL_TEXT : `${value.toFixed(1)} s`;
+export function seconds(value: number | null | undefined): string {
+  return typeof value === "number" ? `${value.toFixed(1)} s` : NULL_TEXT;
 }
 
-export function count(value: number | null): string {
-  return value === null ? NULL_TEXT : value.toLocaleString("en-US");
+// A snapshot written before a field existed has no key for it, which arrives here as
+// undefined. Unknown is rendered like null, never as a zero: the page cannot tell
+// "nothing was reviewed" apart from "this build does not know".
+export function count(value: number | null | undefined): string {
+  return typeof value === "number" ? value.toLocaleString("en-US") : NULL_TEXT;
 }
 
 export function exclusions(value: Record<string, number>): string {

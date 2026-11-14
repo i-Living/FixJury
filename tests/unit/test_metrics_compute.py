@@ -168,6 +168,39 @@ def test_false_completion_uses_declared_success_as_denominator() -> None:
     assert report.false_completion_rate == 0.5
 
 
+def test_false_completion_counts_a_pair_once_however_often_it_retried() -> None:
+    """Two attempts of the same rejected pair are one false claim, not two."""
+
+    report = compute_metrics(
+        [
+            attempt("T-1", declared_success=True, human_verdict="reject"),
+            attempt("T-1", declared_success=True, human_verdict="reject"),
+            attempt("T-2", declared_success=True, human_verdict="accept"),
+        ],
+        agent="baseline",
+    )
+
+    assert report.declared_success_runs == 3
+    assert report.false_completion_rate == 0.5
+
+
+def test_a_pair_whose_heldout_never_ran_leaves_the_regression_free_rate() -> None:
+    """PLAN §3.2 excludes the defective pair instead of counting it as a regression."""
+
+    report = compute_metrics(
+        [
+            attempt("T-1", human_verdict="accept", heldout_pass=True),
+            attempt("T-2", human_verdict="accept", heldout_pass=None),
+        ],
+        agent="baseline",
+    )
+
+    assert report.reviewed_pairs == 2
+    assert report.missing_heldout_pairs == 1
+    assert report.regression_free_accepted == 1
+    assert report.regression_free_acceptance_rate == 1.0
+
+
 def test_false_completion_is_null_without_a_signal() -> None:
     report = compute_metrics([attempt("T-1", declared_success=None)], agent="baseline")
 

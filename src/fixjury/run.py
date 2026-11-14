@@ -27,7 +27,14 @@ from fixjury.agents.baseline import DEFAULT_MAX_STEPS
 from fixjury.agents.registry import build_adapter
 from fixjury.config import settings
 from fixjury.metrics.cost import pricing
-from fixjury.models import CutoffAssumption, Difficulty, Run, RunStatus, Task
+from fixjury.models import (
+    UNABLE_REASON_LENGTH,
+    CutoffAssumption,
+    Difficulty,
+    Run,
+    RunStatus,
+    Task,
+)
 from fixjury.sandbox.container import SandboxError
 from fixjury.spec.render import task_payload
 from fixjury.tasks.schema import TaskDocument
@@ -38,6 +45,23 @@ WORKSPACE_PREFIX = "fixjury-run-"
 # A clone of a real repository takes seconds; ten minutes means git is waiting for
 # something that will never come, and the bench has no way to notice on its own.
 CHECKOUT_TIMEOUT_S = 600.0
+
+
+def bounded_reason(reason: str | None) -> str | None:
+    """A reason that fits ``runs.unable_reason``.
+
+    An adapter builds the reason from a failure message, and a git error can be long;
+    PostgreSQL rejects the overflow at flush, which would throw away the run and its
+    usage after the agent had already finished. The tail is kept — that is where the
+    error names what went wrong.
+    """
+
+    if reason is None:
+        return None
+    text = reason.strip()
+    if len(text) <= UNABLE_REASON_LENGTH:
+        return text or None
+    return "…" + text[-(UNABLE_REASON_LENGTH - 1) :]
 
 
 class RunError(RuntimeError):
@@ -279,7 +303,7 @@ async def run_task(
     stored.model = model
     stored.status = status
     stored.declared_success = None if result is None else result.declared_success
-    stored.unable_reason = None if result is None else result.unable_reason
+    stored.unable_reason = None if result is None else bounded_reason(result.unable_reason)
     stored.diff = None if result is None else result.diff
     stored.diff_sha256 = None if result is None else result.diff_sha256
     stored.tokens_in = 0 if result is None else result.tokens_in

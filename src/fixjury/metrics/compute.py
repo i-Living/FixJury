@@ -125,6 +125,13 @@ def _is_automated_pass(runs: Sequence[Attempt]) -> bool:
     return any(run.automated_pass is True for run in runs)
 
 
+def _heldout_is_missing(runs: Sequence[Attempt]) -> bool:
+    """A patch exists and no held-out result does: the run's data is defective."""
+
+    with_diff = [run for run in runs if run.has_diff]
+    return bool(with_diff) and not any(run.heldout_pass is not None for run in with_diff)
+
+
 def compute_metrics(attempts: Sequence[Attempt], *, agent: str) -> MetricsReport:
     """Compute every §3.2 metric for one agent."""
 
@@ -145,6 +152,11 @@ def compute_metrics(attempts: Sequence[Attempt], *, agent: str) -> MetricsReport
     accepted_pairs = sum(1 for runs in reviewed_pairs.values() if _is_accepted(runs))
     regression_free = sum(1 for runs in reviewed_pairs.values() if _is_regression_free(runs))
     automated = sum(1 for runs in finished_pairs.values() if _is_automated_pass(runs))
+    # A pair whose patch was never tested cannot be called regression-free either way;
+    # PLAN §3.2 excludes it from this rate and publishes the count as a data defect.
+    regression_denominator = reviewed - sum(
+        1 for runs in reviewed_pairs.values() if _heldout_is_missing(runs)
+    )
 
     all_runs = [run for runs in finished_pairs.values() for run in runs]
     tokens_total = sum(run.tokens_in + run.tokens_out for run in all_runs)
@@ -152,13 +164,14 @@ def compute_metrics(attempts: Sequence[Attempt], *, agent: str) -> MetricsReport
 
     declared = [run for run in all_runs if run.declared_success is not None]
     declared_positive = [run for run in declared if run.declared_success is True]
-    # "False completion" is a claim a reviewer checked, so it is bounded by the
-    # reviewed pairs too; an unreviewed claim is neither true nor false yet.
-    reviewed_runs = [run for runs in reviewed_pairs.values() for run in runs]
-    checked_claims = [run for run in reviewed_runs if run.declared_success is True]
-    false_completions = [
-        run for run in checked_claims if not _is_accepted(reviewed_pairs[run.task_id])
+    # "False completion" is a claim about a pair, so it is counted per pair: two
+    # retries of the same rejected pair are one false claim, not two.
+    claimed_pairs = [
+        runs
+        for runs in reviewed_pairs.values()
+        if any(run.declared_success is True for run in runs)
     ]
+    false_completions = [runs for runs in claimed_pairs if not _is_accepted(runs)]
 
     accepted_durations = [run.duration_s for run in accepted_runs if run.duration_s is not None]
     exclusions: dict[str, int] = {}
@@ -178,10 +191,14 @@ def compute_metrics(attempts: Sequence[Attempt], *, agent: str) -> MetricsReport
         reviewed_pairs=reviewed,
         human_acceptance_rate=accepted_pairs / reviewed if reviewed else None,
         human_acceptance_ci=wilson_interval(accepted_pairs, reviewed) if reviewed else None,
-        regression_free_acceptance_rate=regression_free / reviewed if reviewed else None,
-        regression_free_acceptance_ci=wilson_interval(regression_free, reviewed)
-        if reviewed
-        else None,
+        regression_free_acceptance_rate=(
+            regression_free / regression_denominator if regression_denominator else None
+        ),
+        regression_free_acceptance_ci=(
+            wilson_interval(regression_free, regression_denominator)
+            if regression_denominator
+            else None
+        ),
         task_success_rate=automated / pairs if pairs else 0.0,
         tokens_per_accepted_fix=(
             (Decimal(tokens_total) / Decimal(accepted_pairs)).quantize(Decimal("0.01"))
@@ -196,7 +213,7 @@ def compute_metrics(attempts: Sequence[Attempt], *, agent: str) -> MetricsReport
         ),
         median_time_to_repair_s=median(accepted_durations),
         false_completion_rate=(
-            len(false_completions) / len(checked_claims) if checked_claims else None
+            len(false_completions) / len(claimed_pairs) if claimed_pairs else None
         ),
         # Two different gaps, counted apart: a pair with no patch cannot have a
         # held-out result, while a pair with a patch and no held-out result is a
@@ -205,11 +222,7 @@ def compute_metrics(attempts: Sequence[Attempt], *, agent: str) -> MetricsReport
             1 for runs in finished_pairs.values() if not any(run.has_diff for run in runs)
         ),
         missing_heldout_pairs=sum(
-            1
-            for runs in finished_pairs.values()
-            if any(run.has_diff for run in runs)
-            and all(run.heldout_pass is None for run in runs if run.has_diff)
-            and not any(run.heldout_pass is True for run in runs)
+            1 for runs in finished_pairs.values() if _heldout_is_missing(runs)
         ),
         exclusions=exclusions,
     )

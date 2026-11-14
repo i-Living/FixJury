@@ -83,12 +83,12 @@ FixJury — слой доверия к автономному ремонту к�
 | ID | Формула | Примечание |
 | --- | --- | --- |
 | `human_acceptance_rate` | `accepted / reviewed_pairs` | Доля отревьюенных пар, где хотя бы одна попытка принята; 95% доверительный интервал по Wilson; `null`, если не отревьюено ни одной |
-| `regression_free_acceptance_rate` | `regression_free_accepted / reviewed_pairs` | Wilson CI |
+| `regression_free_acceptance_rate` | `regression_free_accepted / (reviewed_pairs − пары, где held-out не отработал)` | Wilson CI; пара с патчем и без held-out — дефект данных, она не попадает и в эту долю |
 | `tokens_per_accepted_fix` | `Σ(tokens_in + tokens_out) по всем прогонам / accepted` | Главная провайдеро-независимая метрика: не зависит от тарифа |
 | `cost_per_accepted_fix` | `Σ cost(все прогоны) / accepted`, где `cost` считается по одному из basis из §3.2.1 | `null`, если ничего не принято; basis указывается в каждой таблице |
 | `task_success_rate` | `automated_pass / pairs` | Автоматический успех отдельно от приёмки |
 | `median_time_to_repair` | медиана `finished_at − started_at` по принятым попыткам | В отчёте — медиана и IQR |
-| `false_completion_rate` | `(declared_success ∧ ¬accepted) / declared_success` по отревьюенным парам | Ложное «готово» — утверждение, которое ревьюер проверил, поэтому непроверенное в знаменатель не входит; `null`, если таких пар нет |
+| `false_completion_rate` | `(declared_success ∧ ¬accepted) / declared_success` по отревьюенным **парам**, каждая пара считается один раз | Ложное «готово» — утверждение, которое ревьюер проверил, поэтому непроверенное в знаменатель не входит; ретраи одной пары не меняют долю; `null`, если таких пар нет |
 
 ### 3.2.1 Стоимость при плоском тарифе
 

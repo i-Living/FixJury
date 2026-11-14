@@ -17,7 +17,10 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fixjury.config import settings
-from fixjury.models import Rejection, RejectionSource, Run, Verdict
+from fixjury.models import Rejection, RejectionSource, Run, RunStatus, Verdict
+from fixjury.run import bounded_reason
+from fixjury.sandbox.container import SandboxError
+from fixjury.sandbox.tools import ToolError
 from fixjury.tasks.loader import read_task, task_path
 from fixjury.verify.policy import Violation, check_policy
 from fixjury.verify.runner import VerificationError, verify_workspace
@@ -69,15 +72,30 @@ async def verify_run(
                 image=image or settings.sandbox_image,
                 heldout_bundle=heldout_bundle,
             )
-        except VerificationError as exc:
-            # The runner builds the environment; the service owns the failure its
-            # callers see, so one unbuildable task cannot take a whole bench down.
+        except (VerificationError, ToolError, SandboxError) as exc:
+            # An install step and the sandbox itself are not the run's fault, but the
+            # pair has no verdict all the same: record it as the exclusion it is,
+            # so the report can drop it with a reason instead of reading a data
+            # defect. The caller still sees one error type.
+            await _exclude(session, run, reason=str(exc))
             raise VerifyError(str(exc)) from exc
         finally:
             if not keep_workspace:
                 shutil.rmtree(workspace, ignore_errors=True)
 
     return await store_verdict(session, run_id, result)
+
+
+async def _exclude(session: AsyncSession, run: Run, *, reason: str) -> None:
+    """Store why this pair leaves the metrics: an unbuildable verification environment.
+
+    ``infra_failed`` is the §3.2 word for exactly this, and the reason goes in the
+    column that already answers "why is this run not usable".
+    """
+
+    run.status = RunStatus.infra_failed
+    run.unable_reason = bounded_reason(f"verification failed: {reason}")
+    await session.flush()
 
 
 async def store_verdict(
