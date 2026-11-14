@@ -12,7 +12,7 @@ twice inserts one row and pushes one id.
 from __future__ import annotations
 
 import uuid
-from typing import Protocol
+from typing import Any, Protocol
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,6 +40,10 @@ class RedisList(Protocol):
 
     async def lrange(self, key: str, start: int, end: int) -> list[str]: ...
 
+    # redis-py's Pipeline: a context manager whose commands are queued, not awaited.
+    # Typed loosely because the protocol only needs the two writes below.
+    def pipeline(self, *, transaction: bool = True) -> Any: ...
+
     async def blmove(
         self,
         source: str,
@@ -48,6 +52,19 @@ class RedisList(Protocol):
         src: str = "LEFT",
         dest: str = "RIGHT",
     ) -> str | None: ...
+
+
+async def replace_pending(client: RedisList, run_id: str) -> None:
+    """Queue ``run_id`` once, dropping any id already pending for it.
+
+    Re-running a bench pushes the same row again, and a duplicated id means the pair is
+    worked, and paid for, twice. Both writes go in one transaction: a crash between
+    them would leave the row queued in the database and absent from Redis.
+    """
+
+    async with client.pipeline(transaction=True) as pipe:
+        pipe.lrem(QUEUED_KEY, 0, run_id)
+        pipe.rpush(QUEUED_KEY, run_id)
 
 
 def next_attempt(current: int) -> int | None:
@@ -70,10 +87,7 @@ async def enqueue(
             raise QueueError(
                 f"run {existing.id} for {task_id}/{agent}/{attempt} is already {state}"
             )
-        # Drop any stale id first: re-running a bench pushes the same row again, and
-        # a duplicated id means the pair is worked, and paid for, twice.
-        await client.lrem(QUEUED_KEY, 0, str(existing.id))
-        await client.rpush(QUEUED_KEY, str(existing.id))
+        await replace_pending(client, str(existing.id))
         return existing
 
     row = Run(
@@ -112,7 +126,12 @@ async def complete(client: RedisList, run_id: str) -> None:
 
 
 async def resume(client: RedisList) -> int:
-    """Put every run left in ``processing`` back into ``queued``."""
+    """Put every run left in ``processing`` back into ``queued``.
+
+    This moves ids, not runs: a run whose worker is still alive is protected from a
+    second delivery by the row lock the worker holds for the whole attempt, so resume
+    can stay a blind requeue and an orphan is never left behind.
+    """
 
     orphans = await client.lrange(PROCESSING_KEY, 0, -1)
     for run_id in orphans:

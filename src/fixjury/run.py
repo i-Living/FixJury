@@ -7,6 +7,7 @@ written here, so an adapter cannot report a verdict about itself.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -351,7 +352,8 @@ async def run_task(
     status = RunStatus.finished
     result: AgentResult | None = None
     try:
-        checkout_base(document.repo, base_commit, workspace)
+        # git is a blocking subprocess: off the loop, or the whole bench waits.
+        await asyncio.to_thread(checkout_base, document.repo, base_commit, workspace)
         with span(
             "run",
             {

@@ -25,6 +25,9 @@ class FakeRedis:
     async def llen(self, key: str) -> int:
         return len(self.lists.get(key, []))
 
+    def pipeline(self, *, transaction: bool = True) -> _FakePipeline:
+        return _FakePipeline(self)
+
     async def lrange(self, key: str, start: int, end: int) -> list[str]:
         return list(self.lists.get(key, []))
 
@@ -114,8 +117,47 @@ def test_claim_is_first_in_first_out() -> None:
     assert asyncio.run(scenario()) == ["a", "b"]
 
 
+def test_queueing_the_same_run_again_leaves_one_entry() -> None:
+    """A resumed bench must not pay for the same pair twice."""
+
+    client = FakeRedis()
+
+    async def scenario() -> None:
+        await queue.replace_pending(client, "run-1")
+        await queue.replace_pending(client, "run-1")
+        await queue.replace_pending(client, "run-2")
+
+    asyncio.run(scenario())
+
+    assert client.lists[queue.QUEUED_KEY] == ["run-1", "run-2"]
+
+
 def test_a_bad_run_id_is_reported() -> None:
     import pytest
 
     with pytest.raises(queue.QueueError, match="not a run id"):
         queue.parse_run_id("not-a-uuid")
+
+
+class _FakePipeline:
+    """A queued pipeline: commands run when the transaction context exits."""
+
+    def __init__(self, client: FakeRedis) -> None:
+        self._client = client
+        self._ops: list[tuple[str, tuple[str, ...]]] = []
+
+    async def __aenter__(self) -> _FakePipeline:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        for name, args in self._ops:
+            await getattr(self._client, name)(*args)
+        self._ops.clear()
+
+    def lrem(self, key: str, count: int, value: str) -> _FakePipeline:
+        self._ops.append(("lrem", (key, str(count), value)))
+        return self
+
+    def rpush(self, key: str, value: str) -> _FakePipeline:
+        self._ops.append(("rpush", (key, value)))
+        return self

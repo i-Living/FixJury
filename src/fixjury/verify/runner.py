@@ -16,6 +16,7 @@ overwrite the tests that judge it.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import shutil
 import subprocess
@@ -225,7 +226,8 @@ async def verify_workspace(
         forbidden=document.forbidden,
     )
 
-    checkout_base(document.repo, base_commit, workspace)
+    # Blocking subprocesses stay off the event loop (AGENTS.md, async for I/O).
+    await asyncio.to_thread(checkout_base, document.repo, base_commit, workspace)
     try:
         apply_patch(workspace, diff)
     except VerificationError as exc:
