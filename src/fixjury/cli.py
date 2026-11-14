@@ -456,8 +456,10 @@ def bench(
             if recovered:
                 typer.echo(f"requeued {recovered} orphaned run(s)")
             async with session_scope(maker) as session:
-                queued = await enqueue_plan(session, client, plan=plan, corpus_root=corpus)
+                queued, skipped = await enqueue_plan(session, client, plan=plan, corpus_root=corpus)
             typer.echo(f"queued {len(queued)} run(s) for {plan.pairs} pair(s)")
+            if skipped:
+                typer.echo(f"skipped {len(skipped)} pair(s) that already ran: {', '.join(skipped)}")
             return await drain(
                 maker,
                 client,

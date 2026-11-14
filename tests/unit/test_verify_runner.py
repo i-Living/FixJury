@@ -11,6 +11,7 @@ from fixjury.verify.runner import (
     apply_patch,
     check_argv,
     overlay_heldout,
+    scm_version_env,
 )
 
 
@@ -55,6 +56,24 @@ def test_a_patch_is_applied_to_the_checkout(repo: Path) -> None:
 def test_a_patch_that_does_not_apply_is_reported(repo: Path) -> None:
     with pytest.raises(VerificationError, match="does not apply"):
         apply_patch(repo, MODULE_PATCH.replace("-VALUE = 1", "-VALUE = 99"))
+
+
+def test_the_nearest_tag_becomes_the_version_the_sandbox_cannot_read(repo: Path) -> None:
+    """The prepare image has no git, so a tag-derived version must be handed in."""
+
+    git(repo, "tag", "v1.4.2")
+
+    assert scm_version_env(repo) == {"SETUPTOOLS_SCM_PRETEND_VERSION": "1.4.2"}
+
+
+def test_a_checkout_without_tags_hands_in_no_version_of_its_own(tmp_path: Path) -> None:
+    git(tmp_path, "init", "--quiet", "--initial-branch=main")
+
+    assert scm_version_env(tmp_path) == {}
+
+
+def test_a_directory_that_is_not_a_repository_hands_in_no_version(tmp_path: Path) -> None:
+    assert scm_version_env(tmp_path / "absent") == {}
 
 
 def test_a_new_file_is_created(repo: Path) -> None:

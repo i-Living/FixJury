@@ -139,6 +139,9 @@ class Run(Base):
         SAEnum(RunStatus, name="run_status"), default=RunStatus.queued
     )
     declared_success: Mapped[bool | None]
+    # Why the adapter could not produce a patch. Without it an empty diff is
+    # indistinguishable from a crashed harness.
+    unable_reason: Mapped[str | None] = mapped_column(String(120))
     diff: Mapped[str | None] = mapped_column(Text)
     diff_sha256: Mapped[str | None] = mapped_column(String(64))
     tokens_in: Mapped[int] = mapped_column(Integer, default=0)

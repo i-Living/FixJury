@@ -20,7 +20,7 @@ from fixjury.config import settings
 from fixjury.models import Rejection, RejectionSource, Run, Verdict
 from fixjury.tasks.loader import read_task, task_path
 from fixjury.verify.policy import Violation, check_policy
-from fixjury.verify.runner import verify_workspace
+from fixjury.verify.runner import VerificationError, verify_workspace
 from fixjury.verify.verdict import VerificationResult, assemble
 
 LOGGER = logging.getLogger(__name__)
@@ -69,6 +69,10 @@ async def verify_run(
                 image=image or settings.sandbox_image,
                 heldout_bundle=heldout_bundle,
             )
+        except VerificationError as exc:
+            # The runner builds the environment; the service owns the failure its
+            # callers see, so one unbuildable task cannot take a whole bench down.
+            raise VerifyError(str(exc)) from exc
         finally:
             if not keep_workspace:
                 shutil.rmtree(workspace, ignore_errors=True)

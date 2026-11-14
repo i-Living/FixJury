@@ -25,7 +25,7 @@ from fixjury.agents.base import AgentResult, LlmConfig, RunRequest
 from fixjury.agents.baseline import DEFAULT_MAX_STEPS
 from fixjury.agents.registry import build_adapter
 from fixjury.config import settings
-from fixjury.metrics.cost import Pricing, PricingError, load_pricing
+from fixjury.metrics.cost import pricing
 from fixjury.models import CutoffAssumption, Difficulty, Run, RunStatus, Task
 from fixjury.sandbox.container import SandboxError
 from fixjury.spec.render import task_payload
@@ -40,14 +40,8 @@ class RunError(RuntimeError):
     """A run cannot be prepared or completed."""
 
 
-def pricing() -> Pricing:
-    """Pricing is configuration: a broken file must not crash a run."""
-
-    try:
-        return load_pricing(Path(settings.pricing_file))
-    except PricingError as exc:
-        LOGGER.warning("pricing file unusable, costing nothing: %s", exc)
-        return Pricing(version="unpriced", currency="USD", models={})
+# Re-exported: the file it reads is configuration, the module that owns that
+# reading is the cost module, and both the queue and a run must agree on it.
 
 
 def agent_spec_text(document: TaskDocument) -> str:
@@ -267,6 +261,7 @@ async def run_task(
     stored.model = model
     stored.status = status
     stored.declared_success = None if result is None else result.declared_success
+    stored.unable_reason = None if result is None else result.unable_reason
     stored.diff = None if result is None else result.diff
     stored.diff_sha256 = None if result is None else result.diff_sha256
     stored.tokens_in = 0 if result is None else result.tokens_in

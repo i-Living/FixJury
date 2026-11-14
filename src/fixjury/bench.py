@@ -86,19 +86,30 @@ def load_plan(
 
 async def enqueue_plan(
     session: AsyncSession, client: queue.RedisList, *, plan: BenchPlan, corpus_root: Path
-) -> list[Run]:
-    """Queue every pair; a pair that already ran is refused, not duplicated."""
+) -> tuple[list[Run], list[str]]:
+    """Queue every pair that has not run yet; report the ones that already have.
+
+    Re-running ``fixjury bench`` after a crash is the resume path, so a pair that
+    already finished is skipped rather than refused: refusing would mean a bench
+    could never be continued, and duplicating it would add a second attempt to the
+    same comparison.
+    """
 
     queued: list[Run] = []
+    skipped: list[str] = []
     for task_id in plan.tasks:
         await ensure_task(session, read_task(task_path(corpus_root, task_id)))
         for agent in plan.agents:
-            queued.append(
-                await queue.enqueue(
-                    session, client, task_id=task_id, agent=agent, attempt=plan.attempt
+            try:
+                queued.append(
+                    await queue.enqueue(
+                        session, client, task_id=task_id, agent=agent, attempt=plan.attempt
+                    )
                 )
-            )
-    return queued
+            except queue.QueueError as exc:
+                LOGGER.info("skipping %s/%s: %s", task_id, agent, exc)
+                skipped.append(f"{task_id}/{agent}")
+    return queued, skipped
 
 
 async def drain(

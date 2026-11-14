@@ -94,7 +94,32 @@ def check_argv(command: str) -> list[str]:
     return [parsed.tool.value, *parsed.args]
 
 
-async def _install(spec: SandboxSpec) -> None:
+def scm_version_env(workspace: Path) -> dict[str, str]:
+    """A version for projects that read it from git, which the sandbox does not have.
+
+    The prepare image is ``python:slim``: no git binary, so hatch-vcs and
+    setuptools-scm cannot read the tag and the install dies while generating
+    metadata. The nearest tag is resolved here, on the checkout the container sees,
+    so the version stays the real one instead of a made-up constant.
+    """
+
+    git = shutil.which("git")
+    if git is None:
+        return {}
+    completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        [git, "-C", str(workspace), "describe", "--tags", "--abbrev=0"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    tag = completed.stdout.strip()
+    if completed.returncode != 0 or not tag:
+        return {}
+    return {"SETUPTOOLS_SCM_PRETEND_VERSION": tag.removeprefix("v")}
+
+
+async def _install(spec: SandboxSpec, *, extra_env: dict[str, str] | None = None) -> None:
+    env = {"PATH": PATH_WITH_VENV, **(extra_env or {})}
     async with open_sandbox(spec) as sandbox:
         for step in INSTALL_STEPS:
             result = await exec_command(
@@ -102,7 +127,7 @@ async def _install(spec: SandboxSpec) -> None:
                 step,
                 timeout_s=600.0,
                 workdir="/workspace",
-                env={"PATH": PATH_WITH_VENV},
+                env=env,
             )
             if result.exit_code == 0:
                 continue
@@ -214,7 +239,7 @@ async def verify_workspace(
         )
 
     prepared = SandboxSpec(image=image, workspace=workspace, network=True, timeout_s=1800)
-    await _install(prepared)
+    await _install(prepared, extra_env=scm_version_env(workspace))
 
     running = SandboxSpec(image=image, workspace=workspace, network=False, timeout_s=1800)
     outcomes, heldout_pass, versions = await _run_checks(
