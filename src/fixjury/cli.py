@@ -13,6 +13,7 @@ from fixjury import __version__, queue
 from fixjury.agents.registry import UnknownAgentError, build_adapter
 from fixjury.bench import BenchError, BenchSummary, drain, enqueue_plan, load_plan
 from fixjury.db import make_engine, make_session_maker, session_scope
+from fixjury.export import MANIFEST_FILENAME, export_rows
 from fixjury.metrics.service import (
     MetricsError,
     compute_snapshot,
@@ -383,6 +384,32 @@ def report(
         drawn["regressions"] = render_regression_split(payloads, out)
         typer.echo(f"charts: {', '.join(sorted(path.name for path in drawn.values()))}")
     typer.echo(f"wrote {target} from {len(snapshots)} snapshot(s)")
+
+
+@app.command()
+def export(
+    out: Annotated[Path, typer.Option("--out", help="Directory for the JSONL files.")] = Path(
+        "docs/export"
+    ),
+) -> None:
+    """Export raw runs, verdicts and rejections as JSONL, with a hashed manifest."""
+
+    async def go() -> dict[str, object]:
+        engine = make_engine()
+        try:
+            async with session_scope(make_session_maker(engine)) as session:
+                return await export_rows(session, out)
+        finally:
+            await engine.dispose()
+
+    manifest = asyncio.run(go())
+    files = manifest.get("files")
+    summary = (
+        ", ".join(f"{name} {entry['rows']} row(s)" for name, entry in files.items())
+        if isinstance(files, dict)
+        else ""
+    )
+    typer.echo(f"wrote {summary} and {MANIFEST_FILENAME} under {out}")
 
 
 @app.command()
