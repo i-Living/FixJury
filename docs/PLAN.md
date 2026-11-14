@@ -313,6 +313,8 @@ uv run fixjury tasks validate benchmarks
 uv run fixjury run --task T-001 --agent baseline
 uv run fixjury bench --agents baseline,mini,openhands
 uv run fixjury report --snapshot <id>
+uv run fixjury export --out docs/export
+uv run fixjury api --port 8000          # read-only JSON API, loopback by default
 ```
 
 ## 10. Структура репозитория

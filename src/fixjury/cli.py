@@ -11,6 +11,7 @@ from docker.errors import DockerException
 
 from fixjury import __version__, queue
 from fixjury.agents.registry import UnknownAgentError, build_adapter
+from fixjury.api.app import create_app as create_api_app
 from fixjury.bench import BenchError, BenchSummary, drain, enqueue_plan, load_plan
 from fixjury.db import make_engine, make_session_maker, session_scope
 from fixjury.export import MANIFEST_FILENAME, export_rows
@@ -449,6 +450,19 @@ def dashboard(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
     typer.echo(f"wrote {target} from {len(snapshots)} snapshot(s)")
+
+
+@app.command()
+def api(
+    host: Annotated[str, typer.Option("--host", help="Bind address.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", help="Port.")] = 8000,
+) -> None:
+    """Serve the read-only JSON API; loopback unless told otherwise."""
+
+    engine = make_engine()
+    application = create_api_app(maker=make_session_maker(engine))
+    typer.echo(f"API on http://{host}:{port}/api/v1")
+    uvicorn.run(application, host=host, port=port, log_level="warning")
 
 
 @app.command()
