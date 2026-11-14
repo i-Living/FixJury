@@ -16,14 +16,13 @@ overwrite the tests that judge it.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import shutil
 import subprocess
 from pathlib import Path
 
 from fixjury.models import RejectionCode
-from fixjury.run import checkout_base
+from fixjury.run import checkout_workspace
 from fixjury.sandbox.container import SandboxSpec, open_sandbox
 from fixjury.sandbox.tools import ExecResult, exec_command
 from fixjury.tasks.heldout import HELDOUT_FILES_DIRNAME, read_heldout
@@ -226,8 +225,7 @@ async def verify_workspace(
         forbidden=document.forbidden,
     )
 
-    # Blocking subprocesses stay off the event loop (AGENTS.md, async for I/O).
-    await asyncio.to_thread(checkout_base, document.repo, base_commit, workspace)
+    await checkout_workspace(document.repo, base_commit, workspace)
     try:
         apply_patch(workspace, diff)
     except VerificationError as exc:

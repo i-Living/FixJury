@@ -174,6 +174,31 @@ def checkout_base(repo_url: str, base_commit: str, dest: Path) -> None:
     _clone_network(git, repo_url, dest, base_commit, env)
 
 
+async def checkout_workspace(repo_url: str, base_commit: str, workspace: Path) -> None:
+    """Check out the base commit without blocking the loop, and survive cancellation.
+
+    git is a blocking subprocess, so it runs on a thread — and a thread cannot be
+    interrupted. If this coroutine is cancelled mid-clone, the caller's cleanup would
+    delete the workspace while git is still writing to it, and git would put it back.
+    The deletion is therefore handed to the thread's own completion.
+    """
+
+    checkout = asyncio.ensure_future(
+        asyncio.to_thread(checkout_base, repo_url, base_commit, workspace)
+    )
+    try:
+        await asyncio.shield(checkout)
+    except asyncio.CancelledError:
+        checkout.add_done_callback(lambda task: _discard_after(task, workspace))
+        raise
+
+
+def _discard_after(task: asyncio.Future[None], workspace: Path) -> None:
+    if not task.cancelled():
+        task.exception()  # retrieved here: nobody awaits a cancelled run's checkout
+    shutil.rmtree(workspace, ignore_errors=True)
+
+
 def mirror_path(repo_url: str) -> Path:
     """Where the bare mirror of ``repo_url`` lives; one directory per repository."""
 
@@ -382,8 +407,7 @@ async def run_task(
     status = RunStatus.finished
     result: AgentResult | None = None
     try:
-        # git is a blocking subprocess: off the loop, or the whole bench waits.
-        await asyncio.to_thread(checkout_base, document.repo, base_commit, workspace)
+        await checkout_workspace(document.repo, base_commit, workspace)
         with span(
             "run",
             {

@@ -65,6 +65,9 @@ async def replace_pending(client: RedisList, run_id: str) -> None:
     async with client.pipeline(transaction=True) as pipe:
         pipe.lrem(QUEUED_KEY, 0, run_id)
         pipe.rpush(QUEUED_KEY, run_id)
+        # Leaving the context only resets the pipeline: without this the two commands
+        # are staged and never sent, and a resumed run is never queued at all.
+        await pipe.execute()
 
 
 def next_attempt(current: int) -> int | None:

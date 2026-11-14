@@ -140,7 +140,7 @@ def test_a_bad_run_id_is_reported() -> None:
 
 
 class _FakePipeline:
-    """A queued pipeline: commands run when the transaction context exits."""
+    """A queued pipeline: staged commands run on ``execute()``, never on exit."""
 
     def __init__(self, client: FakeRedis) -> None:
         self._client = client
@@ -150,9 +150,12 @@ class _FakePipeline:
         return self
 
     async def __aexit__(self, *exc: object) -> None:
-        for name, args in self._ops:
-            await getattr(self._client, name)(*args)
+        # redis-py resets an unexecuted pipeline on exit; it does not run it.
         self._ops.clear()
+
+    async def execute(self) -> list[int]:
+        ops, self._ops = self._ops, []
+        return [await getattr(self._client, name)(*args) for name, args in ops]
 
     def lrem(self, key: str, count: int, value: str) -> _FakePipeline:
         self._ops.append(("lrem", (key, str(count), value)))

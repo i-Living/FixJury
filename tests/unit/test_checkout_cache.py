@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
 
 from fixjury.config import settings
-from fixjury.run import checkout_base, mirror_path
+from fixjury.run import checkout_base, checkout_workspace, mirror_path
 
 GIT = shutil.which("git") or "git"
 
@@ -63,6 +65,35 @@ def test_a_commit_that_landed_after_the_cache_is_still_checkoutable(tmp_path: Pa
 
     checkout_base(str(origin), second, tmp_path / "after")
     assert (tmp_path / "after" / "module.py").read_text() == "VALUE = 2\n"
+
+
+def test_a_cancelled_checkout_still_cleans_up_after_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """git cannot be interrupted, so deletion waits for the thread it will otherwise beat."""
+
+    workspace = tmp_path / "workspace"
+
+    def slow_checkout(repo: str, commit: str, dest: Path) -> None:
+        workspace.mkdir(parents=True, exist_ok=True)
+        time.sleep(0.2)
+        (workspace / "late.txt").write_text("git was still writing\n")
+
+    async def scenario() -> None:
+        monkeypatch.setattr("fixjury.run.checkout_base", slow_checkout)
+        task = asyncio.ensure_future(
+            checkout_workspace("https://example.test/repo", "0" * 40, workspace)
+        )
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        # The callback runs when the thread stops; give it a moment, not a spin loop.
+        await asyncio.sleep(0.5)
+
+    asyncio.run(scenario())
+
+    assert not workspace.exists()
 
 
 def test_a_commit_on_another_branch_reaches_the_cache(tmp_path: Path) -> None:
