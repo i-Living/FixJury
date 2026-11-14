@@ -29,8 +29,8 @@ from fixjury.agents.mini import MiniRun, read_run
 from fixjury.sandbox.container import SandboxSpec, open_sandbox
 from fixjury.sandbox.diff import UnreadableDiff, capture_diff
 from fixjury.sandbox.network import open_run_network
-from fixjury.sandbox.proxy import AllowlistProxy
-from fixjury.sandbox.tools import exec_command
+from fixjury.sandbox.proxy import AllowlistProxy, proxy_environment
+from fixjury.sandbox.tools import TRUNCATION_MARKERS, exec_command
 
 LOGGER = logging.getLogger(__name__)
 TASK_FILENAME = "TASK.md"
@@ -92,25 +92,6 @@ def exposes_secret(diff: str, key: str) -> bool:
     """
 
     return bool(key) and key in diff
-
-
-def proxy_environment(proxy_url: str) -> dict[str, str]:
-    """Every egress variable points at the proxy, and none of them is an exception.
-
-    An empty ``NO_PROXY`` is deliberate. Excluding localhost would only make sense
-    if the sandbox had something local worth reaching, and it does not; worse, it
-    silently bypasses the proxy whenever the model endpoint is self-hosted on the
-    host's loopback, which turns a working run into a connection error.
-    """
-
-    return {
-        "HTTP_PROXY": proxy_url,
-        "HTTPS_PROXY": proxy_url,
-        "http_proxy": proxy_url,
-        "https_proxy": proxy_url,
-        "NO_PROXY": "",
-        "no_proxy": "",
-    }
 
 
 @dataclass(frozen=True)
@@ -239,8 +220,22 @@ class ContainerHarnessAdapter:
             tokens_out=trail.tokens_out if trail else 0,
             steps=trail.steps if trail else 0,
             sandbox_seconds=lifetime,
-            summary=output.strip().splitlines()[-1] if output.strip() else "",
+            summary=_last_meaningful_line(output),
         )
+
+
+def _last_meaningful_line(output: str) -> str:
+    """The last line a reader can use, skipping the truncation markers.
+
+    A capped output ends with bookkeeping rather than with the failure, and the
+    failure is the only reason this string exists.
+    """
+
+    for line in reversed(output.strip().splitlines()):
+        stripped = line.strip()
+        if stripped and stripped not in TRUNCATION_MARKERS:
+            return stripped
+    return ""
 
 
 def stash_workspace_entry(workspace: Path, name: str) -> str:

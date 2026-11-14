@@ -18,6 +18,7 @@ def attempt(task_id: str, **kwargs: object) -> Attempt:
         "agent": "baseline",
         "status": "finished",
         "diff_sha256": "a" * 64,
+        "has_diff": True,
         "tokens_in": 100,
         "tokens_out": 50,
         "automated_pass": True,
@@ -32,10 +33,59 @@ def test_an_empty_corpus_is_not_a_division_by_zero() -> None:
     report = compute_metrics([], agent="baseline")
 
     assert report.pairs == 0
-    assert report.human_acceptance_rate == 0.0
+    # An empty corpus has no acceptance rate; zero would claim that nothing passed review.
+    assert report.human_acceptance_rate is None
     assert report.human_acceptance_ci is None
     assert report.tokens_per_accepted_fix is None
     assert report.cost_per_accepted_fix is None
+
+
+def test_the_corpus_split_is_computed_here_and_adds_up_to_one() -> None:
+    """The page and the charts read these shares; nothing downstream may compute them."""
+
+    report = compute_metrics(
+        [
+            attempt("T-1", human_verdict="accept", heldout_pass=True, policy_pass=True),
+            attempt("T-2", human_verdict="accept", heldout_pass=False, policy_pass=True),
+            attempt("T-3", human_verdict="reject"),
+            attempt("T-4", human_verdict="reject"),
+        ],
+        agent="baseline",
+    )
+
+    payload = as_payload(report, cost_basis="list_price", pricing_version="v")
+    split = payload["split"]
+
+    assert split == {"regression_free": 0.25, "with_regression": 0.25, "not_accepted": 0.5}
+    assert sum(split.values()) == pytest.approx(1.0)
+
+
+def test_a_corpus_with_nothing_reviewed_has_a_null_split_not_a_zero_one() -> None:
+    """Zero would say every pair failed review; nothing has been reviewed at all."""
+
+    report = compute_metrics([attempt("T-1", human_verdict=None)], agent="baseline")
+
+    split = as_payload(report, cost_basis="list_price", pricing_version="v")["split"]
+
+    assert split == {"regression_free": None, "with_regression": None, "not_accepted": None}
+
+
+def test_more_regression_free_acceptances_than_acceptances_is_clamped() -> None:
+    report = compute_metrics(
+        [
+            attempt("T-1", human_verdict="accept", heldout_pass=True, policy_pass=True),
+            # Accepted by the reviewer but not regression-free, so the counts disagree:
+            # the clean share must be clamped to the accepted one, not exceed it.
+            attempt("T-2", human_verdict="reject", heldout_pass=True, policy_pass=True),
+        ],
+        agent="baseline",
+    )
+
+    split = as_payload(report, cost_basis="list_price", pricing_version="v")["split"]
+
+    assert split["regression_free"] == pytest.approx(0.5)
+    assert split["with_regression"] == 0.0
+    assert sum(split.values()) == pytest.approx(1.0), "a stack that ends past 100% is a lie"
 
 
 def test_a_pair_is_a_task_not_an_attempt() -> None:
@@ -61,10 +111,17 @@ def test_an_infra_failed_run_is_not_an_attempt() -> None:
     assert report.exclusions == {"infra_failed": 1}
 
 
-def test_a_finished_run_without_a_diff_is_not_an_attempt() -> None:
-    report = compute_metrics([attempt("T-1", diff_sha256=None)], agent="baseline")
+def test_a_finished_run_without_a_diff_counts_as_a_failed_pair() -> None:
+    """A no-op is a result: leaving it out would make a silent agent look better."""
 
-    assert report.pairs == 0
+    report = compute_metrics(
+        [attempt("T-1", diff_sha256=None, has_diff=False, heldout_pass=None)], agent="baseline"
+    )
+
+    assert report.pairs == 1
+    assert report.no_patch_pairs == 1
+    # A pair with no patch cannot have a held-out result, and that is not a defect.
+    assert report.missing_heldout_pairs == 0
 
 
 def test_acceptance_counts_pairs_with_any_accepted_attempt() -> None:
@@ -132,6 +189,14 @@ def test_cost_per_accepted_fix_divides_by_accepted_pairs() -> None:
     assert report.cost_per_accepted_fix == Decimal("4.0000")
 
 
+def test_an_empty_corpus_has_no_task_success_rate() -> None:
+    """Zero pairs is "not run", not "nothing passed" — the same rule as a null cost."""
+
+    report = compute_metrics([], agent="baseline")
+
+    assert report.task_success_rate is None
+
+
 def test_task_success_rate_counts_automated_pass_pairs() -> None:
     report = compute_metrics(
         [
@@ -157,6 +222,58 @@ def test_false_completion_uses_declared_success_as_denominator() -> None:
 
     assert report.declared_success_runs == 2
     assert report.false_completion_rate == 0.5
+
+
+def test_false_completion_counts_a_pair_once_however_often_it_retried() -> None:
+    """Two attempts of the same rejected pair are one false claim, not two."""
+
+    report = compute_metrics(
+        [
+            attempt("T-1", declared_success=True, human_verdict="reject"),
+            attempt("T-1", declared_success=True, human_verdict="reject"),
+            attempt("T-2", declared_success=True, human_verdict="accept"),
+        ],
+        agent="baseline",
+    )
+
+    assert report.declared_success_runs == 3
+    assert report.false_completion_rate == 0.5
+
+
+def test_a_pair_whose_heldout_never_ran_leaves_the_regression_free_rate() -> None:
+    """PLAN §3.2 excludes the defective pair instead of counting it as a regression."""
+
+    report = compute_metrics(
+        [
+            attempt("T-1", human_verdict="accept", heldout_pass=True),
+            attempt("T-2", human_verdict="accept", heldout_pass=None),
+        ],
+        agent="baseline",
+    )
+
+    assert report.reviewed_pairs == 2
+    assert report.missing_heldout_pairs == 1
+    assert report.regression_free_accepted == 1
+    assert report.regression_free_acceptance_rate == 1.0
+
+
+def test_an_excluded_retry_is_not_evidence_about_the_pair() -> None:
+    """An ``infra_failed`` retry keeps the diff the agent made, but it was never verified.
+
+    Reading that diff as evidence turns a pair that produced no patch into a pair whose
+    held-out result went missing — two wrong counts from one defect.
+    """
+
+    report = compute_metrics(
+        [
+            attempt("T-1", has_diff=False, diff_sha256=None, heldout_pass=None),
+            attempt("T-1", status="infra_failed", has_diff=True, heldout_pass=None),
+        ],
+        agent="baseline",
+    )
+
+    assert report.no_patch_pairs == 1
+    assert report.missing_heldout_pairs == 0
 
 
 def test_false_completion_is_null_without_a_signal() -> None:

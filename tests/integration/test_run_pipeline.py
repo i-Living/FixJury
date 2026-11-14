@@ -14,7 +14,7 @@ from fixjury import run as run_module
 from fixjury.agents.base import AgentResult, RunRequest
 from fixjury.db import make_engine
 from fixjury.models import Run, RunStatus, Task
-from fixjury.run import RunError, run_task
+from fixjury.run import RunError, pricing, run_task
 from fixjury.tasks.loader import read_task
 
 pytestmark = pytest.mark.integration
@@ -29,8 +29,9 @@ class FakeAdapter:
     name = "fake"
     version = "0"
 
-    def __init__(self, *, crash: bool = False) -> None:
+    def __init__(self, *, crash: bool = False, unable_reason: str | None = None) -> None:
         self.crash = crash
+        self.unable_reason = unable_reason
         self.seen: list[RunRequest] = []
 
     async def run(self, request: RunRequest) -> AgentResult:
@@ -41,7 +42,7 @@ class FakeAdapter:
             diff="--- a/module.py\n+++ b/module.py\n",
             diff_sha256="b" * 64,
             declared_success=True,
-            unable_reason=None,
+            unable_reason=self.unable_reason,
             tokens_in=11,
             tokens_out=7,
             steps=3,
@@ -100,7 +101,9 @@ def test_a_finished_run_is_persisted_with_its_diff(monkeypatch: pytest.MonkeyPat
             assert stored.tokens_in == 11
             assert stored.tokens_out == 7
             assert stored.sandbox_seconds == Decimal("1.50")
-            assert stored.pricing_version.startswith("unpriced")
+            assert stored.pricing_version == pricing().version
+            # "fake" is not a priced model, so the tokens cost nothing here; what
+            # matters is that the version is recorded next to the number.
             assert stored.cost_list_usd == Decimal("0")
             assert len(stored.config_hash) == 64
             assert stored.started_at is not None
@@ -134,6 +137,26 @@ def test_a_crashed_adapter_becomes_an_infra_failure(monkeypatch: pytest.MonkeyPa
     assert row.diff is None
     assert row.diff_sha256 is None
     assert row.declared_success is None
+
+
+def test_the_reason_a_patch_is_missing_is_stored(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An empty diff with no reason reads as a silent bug; the bench needs the why."""
+
+    require_postgres()
+    monkeypatch.setattr(run_module, "checkout_base", lambda *args: None)
+    monkeypatch.setattr(
+        run_module,
+        "build_adapter",
+        lambda name: FakeAdapter(unable_reason="harness exited 3"),
+    )
+
+    async def scenario() -> Run:
+        async with rolled_back_session() as session:
+            return await run_task(DOCUMENT, session, agent="fake", attempt=5)
+
+    row = asyncio.run(scenario())
+
+    assert row.unable_reason == "harness exited 3"
 
 
 def test_a_frozen_task_is_never_rewritten(monkeypatch: pytest.MonkeyPatch) -> None:

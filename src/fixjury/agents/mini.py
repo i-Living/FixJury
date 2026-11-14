@@ -70,6 +70,20 @@ ENV: tuple[tuple[str, str], ...] = (
 )
 
 
+def litellm_model(model: str) -> str:
+    """Name the model the way litellm needs it: with a provider prefix.
+
+    mini reaches the model through litellm, which refuses a bare ``deepseek-v4.1-flash``
+    with "LLM Provider NOT provided" because it cannot tell which API to call. Our
+    endpoint is OpenAI-compatible, so an unprefixed name means ``openai/``; a name
+    that already carries a provider is left as it is.
+    """
+
+    if not model:
+        return ""
+    return model if "/" in model else f"openai/{model}"
+
+
 def config_text(llm: LlmConfig | None, max_steps: int) -> str:
     """The overrides file for one run.
 
@@ -86,7 +100,7 @@ def config_text(llm: LlmConfig | None, max_steps: int) -> str:
     lines = [
         "# Written by FixJury for one run; removed before the diff is captured.",
         "model:",
-        f"  model_name: {json.dumps(model)}",
+        f"  model_name: {json.dumps(litellm_model(model))}",
         "  model_kwargs:",
         f"    api_base: {json.dumps(endpoint)}",
         f"    api_key: {json.dumps(api_key)}",
@@ -235,5 +249,6 @@ __all__ = [
     "TRAJECTORY_FILENAME",
     "MiniRun",
     "config_text",
+    "litellm_model",
     "read_run",
 ]

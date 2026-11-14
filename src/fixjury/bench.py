@@ -22,7 +22,7 @@ from fixjury.models import Run, RunStatus
 from fixjury.run import ensure_task
 from fixjury.tasks.loader import read_index, read_task, task_path
 from fixjury.verify.service import VerifyError, verify_run
-from fixjury.worker import work_once
+from fixjury.worker import WorkerError, acknowledge, work_once
 
 LOGGER = logging.getLogger(__name__)
 
@@ -86,19 +86,30 @@ def load_plan(
 
 async def enqueue_plan(
     session: AsyncSession, client: queue.RedisList, *, plan: BenchPlan, corpus_root: Path
-) -> list[Run]:
-    """Queue every pair; a pair that already ran is refused, not duplicated."""
+) -> tuple[list[Run], list[str]]:
+    """Queue every pair that has not run yet; report the ones that already have.
+
+    Re-running ``fixjury bench`` after a crash is the resume path, so a pair that
+    already finished is skipped rather than refused: refusing would mean a bench
+    could never be continued, and duplicating it would add a second attempt to the
+    same comparison.
+    """
 
     queued: list[Run] = []
+    skipped: list[str] = []
     for task_id in plan.tasks:
         await ensure_task(session, read_task(task_path(corpus_root, task_id)))
         for agent in plan.agents:
-            queued.append(
-                await queue.enqueue(
-                    session, client, task_id=task_id, agent=agent, attempt=plan.attempt
+            try:
+                queued.append(
+                    await queue.enqueue(
+                        session, client, task_id=task_id, agent=agent, attempt=plan.attempt
+                    )
                 )
-            )
-    return queued
+            except queue.QueueError as exc:
+                LOGGER.info("skipping %s/%s: %s", task_id, agent, exc)
+                skipped.append(f"{task_id}/{agent}")
+    return queued, skipped
 
 
 async def drain(
@@ -122,9 +133,18 @@ async def drain(
             break
         # One transaction per run: a crash must not roll back the runs before it.
         async with session_scope(maker) as session:
-            row = await work_once(client, session, corpus_root=corpus_root, image=image, wait_s=1.0)
+            try:
+                row = await work_once(
+                    client, session, corpus_root=corpus_root, image=image, wait_s=1.0
+                )
+            except WorkerError as exc:
+                # One unusable delivery is not a reason to abandon the other pairs.
+                LOGGER.warning("dropping a delivery: %s", exc)
+                continue
             if row is None:
                 break
+            # The run has settled in the database: only now may its id leave the queue.
+            await acknowledge(client, row.id)
             summary.record(row)
             if verify and row.status is RunStatus.finished:
                 try:

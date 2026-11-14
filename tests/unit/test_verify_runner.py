@@ -11,6 +11,7 @@ from fixjury.verify.runner import (
     apply_patch,
     check_argv,
     overlay_heldout,
+    scm_version_env,
 )
 
 
@@ -55,6 +56,68 @@ def test_a_patch_is_applied_to_the_checkout(repo: Path) -> None:
 def test_a_patch_that_does_not_apply_is_reported(repo: Path) -> None:
     with pytest.raises(VerificationError, match="does not apply"):
         apply_patch(repo, MODULE_PATCH.replace("-VALUE = 1", "-VALUE = 99"))
+
+
+def test_the_nearest_tag_becomes_the_version_the_sandbox_cannot_read(repo: Path) -> None:
+    """The prepare image has no git, so a tag-derived version must be handed in."""
+
+    git(repo, "tag", "v1.4.2")
+
+    assert scm_version_env(repo) == {"SETUPTOOLS_SCM_PRETEND_VERSION": "1.4.2"}
+
+
+@pytest.mark.parametrize(
+    ("tag", "version"),
+    [
+        ("v1.4.2", "1.4.2"),
+        ("1.4.2", "1.4.2"),
+        ("demo-v1.4.2", "1.4.2"),
+        ("9.0.0a3", "9.0.0a3"),
+        # Suffixes are written the way a backend compares them, not the way a tag does.
+        ("v2.0.0-rc.1", "2.0.0rc1"),
+        ("2.0.0-beta.2", "2.0.0b2"),
+        ("v2.0.0-1", "2.0.0.post1"),
+        ("v1.0.0.dev3", "1.0.0.dev3"),
+        ("1.2.3+ubuntu", "1.2.3+ubuntu"),
+    ],
+)
+def test_a_prefixed_tag_hands_in_the_version_not_the_whole_tag(
+    repo: Path, tag: str, version: str
+) -> None:
+    """``SETUPTOOLS_SCM_PRETEND_VERSION`` is a version: a project prefix would be refused."""
+
+    git(repo, "tag", tag)
+
+    assert scm_version_env(repo) == {"SETUPTOOLS_SCM_PRETEND_VERSION": version}
+
+
+def test_a_tag_without_a_version_hands_in_nothing(repo: Path) -> None:
+    git(repo, "tag", "nightly")
+
+    assert scm_version_env(repo) == {}
+
+
+def test_a_checkout_without_tags_hands_in_no_version_of_its_own(tmp_path: Path) -> None:
+    git(tmp_path, "init", "--quiet", "--initial-branch=main")
+
+    assert scm_version_env(tmp_path) == {}
+
+
+def test_a_directory_that_is_not_a_repository_hands_in_no_version(tmp_path: Path) -> None:
+    assert scm_version_env(tmp_path / "absent") == {}
+
+
+def test_a_hung_git_lookup_gives_up_instead_of_holding_the_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The lookup reads a local checkout; a hang is a bug, and the install still matters."""
+
+    def hang(*args: object, **kwargs: object) -> None:
+        raise subprocess.TimeoutExpired("git", 30.0)
+
+    monkeypatch.setattr("fixjury.verify.runner.subprocess.run", hang)
+
+    assert scm_version_env(tmp_path) == {}
 
 
 def test_a_new_file_is_created(repo: Path) -> None:

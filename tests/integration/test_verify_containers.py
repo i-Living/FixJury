@@ -64,9 +64,15 @@ def workspace(tmp_path: Path) -> Path:
 
 
 def prepare(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(verify_module.runner, "checkout_base", lambda *args: None)
+    async def no_checkout(repo: str, commit: str, workspace: Path) -> None:
+        # The checkout is the sandbox's own concern here; the tests build the tree.
+        return None
 
-    async def no_install(spec: SandboxSpec) -> None:
+    monkeypatch.setattr(verify_module.runner, "checkout_workspace", no_checkout)
+
+    async def no_install(spec: SandboxSpec, *, extra_env: dict[str, str] | None = None) -> None:
+        # The environment is built by hand in this test; the signature still has to
+        # accept the version the runner hands in for scm-based projects.
         return None
 
     monkeypatch.setattr(verify_module.runner, "_install", no_install)

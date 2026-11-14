@@ -122,7 +122,7 @@ def test_checkout_base_lands_on_the_requested_commit(repo: Path, tmp_path: Path)
 
 
 def test_checkout_base_refuses_an_unknown_commit(repo: Path, tmp_path: Path) -> None:
-    with pytest.raises(RunError, match="failed"):
+    with pytest.raises(RunError, match="is not in"):
         checkout_base(str(repo), "0" * 40, tmp_path / "checkout")
 
 

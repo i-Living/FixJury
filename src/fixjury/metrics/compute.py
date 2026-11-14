@@ -27,6 +27,7 @@ class Attempt:
     tokens_out: int = 0
     cost_list_usd: Decimal = Decimal("0")
     diff_sha256: str | None = None
+    has_diff: bool = False
     duration_s: float | None = None
     automated_pass: bool | None = None
     heldout_pass: bool | None = None
@@ -35,9 +36,14 @@ class Attempt:
 
     @property
     def finished(self) -> bool:
-        """A run that reached the end with something to verify."""
+        """A run that reached the end, patch or no patch.
 
-        return self.status == "finished" and bool(self.diff_sha256)
+        A no-op is a result: an agent that returns nothing failed the pair, and
+        dropping it from the denominator would make it look better than one that
+        tried and broke something.
+        """
+
+        return self.status == "finished"
 
 
 @dataclass(frozen=True)
@@ -47,28 +53,62 @@ class Interval:
 
 
 @dataclass(frozen=True)
+class CorpusSplit:
+    """Where the reviewed pairs end up: three shares that add up to 1, or nothing at all.
+
+    ``None`` is not zero here: a snapshot with no reviewed pair says "unknown", and a
+    chart that drew 0% would state a rate nobody measured.
+    """
+
+    regression_free: float | None
+    with_regression: float | None
+    not_accepted: float | None
+
+
+@dataclass(frozen=True)
 class MetricsReport:
     """Everything §3.2 asks for, plus the denominators that explain it."""
 
     agent: str
     pairs: int
+    reviewed_pairs: int
     accepted: int
     regression_free_accepted: int
     automated_pass_pairs: int
     declared_success_runs: int
     tokens_total: int
     cost_total: Decimal
-    human_acceptance_rate: float
+    human_acceptance_rate: float | None
     human_acceptance_ci: Interval | None
-    regression_free_acceptance_rate: float
+    regression_free_acceptance_rate: float | None
     regression_free_acceptance_ci: Interval | None
-    task_success_rate: float
+    task_success_rate: float | None
     tokens_per_accepted_fix: Decimal | None
     cost_per_accepted_fix: Decimal | None
     median_time_to_repair_s: float | None
     false_completion_rate: float | None
+    no_patch_pairs: int
     missing_heldout_pairs: int
+    split: CorpusSplit
     exclusions: dict[str, int] = field(default_factory=dict)
+
+
+def corpus_split(reviewed: int, accepted: int, regression_free: int) -> CorpusSplit:
+    """The share of reviewed pairs that ended clean, regressed, or unaccepted.
+
+    Trust the pairs, not the counters: a snapshot cannot describe more acceptances than
+    it has pairs, and a regression-free acceptance is a subset of an acceptance.
+    """
+
+    if reviewed <= 0:
+        return CorpusSplit(None, None, None)
+    accepted_count = min(max(accepted, 0), reviewed)
+    clean_count = min(max(regression_free, 0), accepted_count)
+    return CorpusSplit(
+        regression_free=clean_count / reviewed,
+        with_regression=(accepted_count - clean_count) / reviewed,
+        not_accepted=(reviewed - accepted_count) / reviewed,
+    )
 
 
 def wilson_interval(successes: int, total: int, z: float = Z_95) -> Interval | None:
@@ -91,6 +131,11 @@ def median(values: Sequence[float]) -> float | None:
     if len(ordered) % 2:
         return ordered[middle]
     return (ordered[middle - 1] + ordered[middle]) / 2
+
+
+# An attempt that did not settle is not evidence about the pair: it has no verdict,
+# and ``infra_failed`` even keeps the diff the agent produced.
+EVIDENCE_EXCLUDED_STATUSES = frozenset({"infra_failed", "cancelled"})
 
 
 def _pairs(attempts: Sequence[Attempt]) -> dict[str, list[Attempt]]:
@@ -117,6 +162,29 @@ def _is_automated_pass(runs: Sequence[Attempt]) -> bool:
     return any(run.automated_pass is True for run in runs)
 
 
+def _evidence(runs: Sequence[Attempt]) -> list[Attempt]:
+    """The attempts that can speak for the pair.
+
+    An ``infra_failed`` attempt keeps whatever diff it produced — the exclusion happens
+    after the agent finished — but it was never verified, so reading its diff as
+    evidence makes a pair look like it had a patch and lost its held-out result. A
+    cancelled attempt is likewise not a result.
+    """
+
+    return [run for run in runs if run.status not in EVIDENCE_EXCLUDED_STATUSES]
+
+
+def _has_patch(runs: Sequence[Attempt]) -> bool:
+    return any(run.has_diff for run in _evidence(runs))
+
+
+def _heldout_is_missing(runs: Sequence[Attempt]) -> bool:
+    """A patch exists and no held-out result does: the run's data is defective."""
+
+    with_diff = [run for run in _evidence(runs) if run.has_diff]
+    return bool(with_diff) and not any(run.heldout_pass is not None for run in with_diff)
+
+
 def compute_metrics(attempts: Sequence[Attempt], *, agent: str) -> MetricsReport:
     """Compute every §3.2 metric for one agent."""
 
@@ -125,10 +193,23 @@ def compute_metrics(attempts: Sequence[Attempt], *, agent: str) -> MetricsReport
         task_id: runs for task_id, runs in grouped.items() if any(run.finished for run in runs)
     }
     pairs = len(finished_pairs)
-    accepted_runs = [run for runs in finished_pairs.values() for run in runs if _is_accepted(runs)]
-    accepted_pairs = sum(1 for runs in finished_pairs.values() if _is_accepted(runs))
-    regression_free = sum(1 for runs in finished_pairs.values() if _is_regression_free(runs))
+    # Acceptance is a statement about reviewed patches. Counting an unreviewed pair
+    # as "not accepted" would report the review backlog as a failure rate.
+    reviewed_pairs = {
+        task_id: runs
+        for task_id, runs in finished_pairs.items()
+        if any(run.human_verdict is not None for run in runs)
+    }
+    reviewed = len(reviewed_pairs)
+    accepted_runs = [run for runs in reviewed_pairs.values() for run in runs if _is_accepted(runs)]
+    accepted_pairs = sum(1 for runs in reviewed_pairs.values() if _is_accepted(runs))
+    regression_free = sum(1 for runs in reviewed_pairs.values() if _is_regression_free(runs))
     automated = sum(1 for runs in finished_pairs.values() if _is_automated_pass(runs))
+    # A pair whose patch was never tested cannot be called regression-free either way;
+    # PLAN §3.2 excludes it from this rate and publishes the count as a data defect.
+    regression_denominator = reviewed - sum(
+        1 for runs in reviewed_pairs.values() if _heldout_is_missing(runs)
+    )
 
     all_runs = [run for runs in finished_pairs.values() for run in runs]
     tokens_total = sum(run.tokens_in + run.tokens_out for run in all_runs)
@@ -136,9 +217,14 @@ def compute_metrics(attempts: Sequence[Attempt], *, agent: str) -> MetricsReport
 
     declared = [run for run in all_runs if run.declared_success is not None]
     declared_positive = [run for run in declared if run.declared_success is True]
-    false_completions = [
-        run for run in declared_positive if not _is_accepted(finished_pairs.get(run.task_id, []))
+    # "False completion" is a claim about a pair, so it is counted per pair: two
+    # retries of the same rejected pair are one false claim, not two.
+    claimed_pairs = [
+        runs
+        for runs in reviewed_pairs.values()
+        if any(run.declared_success is True for run in runs)
     ]
+    false_completions = [runs for runs in claimed_pairs if not _is_accepted(runs)]
 
     accepted_durations = [run.duration_s for run in accepted_runs if run.duration_s is not None]
     exclusions: dict[str, int] = {}
@@ -155,11 +241,20 @@ def compute_metrics(attempts: Sequence[Attempt], *, agent: str) -> MetricsReport
         declared_success_runs=len(declared_positive),
         tokens_total=tokens_total,
         cost_total=cost_total,
-        human_acceptance_rate=accepted_pairs / pairs if pairs else 0.0,
-        human_acceptance_ci=wilson_interval(accepted_pairs, pairs),
-        regression_free_acceptance_rate=regression_free / pairs if pairs else 0.0,
-        regression_free_acceptance_ci=wilson_interval(regression_free, pairs),
-        task_success_rate=automated / pairs if pairs else 0.0,
+        reviewed_pairs=reviewed,
+        human_acceptance_rate=accepted_pairs / reviewed if reviewed else None,
+        human_acceptance_ci=wilson_interval(accepted_pairs, reviewed) if reviewed else None,
+        regression_free_acceptance_rate=(
+            regression_free / regression_denominator if regression_denominator else None
+        ),
+        regression_free_acceptance_ci=(
+            wilson_interval(regression_free, regression_denominator)
+            if regression_denominator
+            else None
+        ),
+        # No pair, no rate: zero would say "nothing worked" about a corpus that was
+        # never run, the same mistake as a zero cost per accepted fix.
+        task_success_rate=automated / pairs if pairs else None,
         tokens_per_accepted_fix=(
             (Decimal(tokens_total) / Decimal(accepted_pairs)).quantize(Decimal("0.01"))
             if accepted_pairs
@@ -173,20 +268,22 @@ def compute_metrics(attempts: Sequence[Attempt], *, agent: str) -> MetricsReport
         ),
         median_time_to_repair_s=median(accepted_durations),
         false_completion_rate=(
-            len(false_completions) / len(declared_positive) if declared_positive else None
+            len(false_completions) / len(claimed_pairs) if claimed_pairs else None
         ),
+        # Two different gaps, counted apart: a pair with no patch cannot have a
+        # held-out result, while a pair with a patch and no held-out result is a
+        # defect in the run.
+        no_patch_pairs=sum(1 for runs in finished_pairs.values() if not _has_patch(runs)),
         missing_heldout_pairs=sum(
-            1
-            for runs in finished_pairs.values()
-            if any(run.heldout_pass is None for run in runs)
-            and not any(run.heldout_pass is True for run in runs)
+            1 for runs in finished_pairs.values() if _heldout_is_missing(runs)
         ),
+        split=corpus_split(reviewed, accepted_pairs, regression_free),
         exclusions=exclusions,
     )
 
 
 def as_payload(
-    report: MetricsReport, *, cost_basis: str, pricing_version: str
+    report: MetricsReport, *, cost_basis: str, pricing_version: str | None
 ) -> dict[str, object]:
     """The JSONB payload of a ``metric_snapshots`` row."""
 
@@ -196,11 +293,19 @@ def as_payload(
         "pricing_version": pricing_version,
         "denominators": {
             "pairs": report.pairs,
+            "reviewed_pairs": report.reviewed_pairs,
             "accepted": report.accepted,
             "regression_free_accepted": report.regression_free_accepted,
             "automated_pass_pairs": report.automated_pass_pairs,
             "declared_success_runs": report.declared_success_runs,
+            "no_patch_pairs": report.no_patch_pairs,
             "missing_heldout_pairs": report.missing_heldout_pairs,
+        },
+        # Computed here and nowhere else: the report, the charts and the page read it.
+        "split": {
+            "regression_free": report.split.regression_free,
+            "with_regression": report.split.with_regression,
+            "not_accepted": report.split.not_accepted,
         },
         "exclusions": report.exclusions,
         "metrics": {

@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fixjury.metrics.compute import Attempt, as_payload, compute_metrics
-from fixjury.models import CostBasis, MetricSnapshot, Run, Verdict
+from fixjury.models import CostBasis, MetricSnapshot, Run, RunStatus, Verdict
 
 
 class MetricsError(RuntimeError):
@@ -45,6 +45,7 @@ def attempts_from_rows(rows: Sequence[tuple[Run, Verdict | None]]) -> list[Attem
                 tokens_out=run.tokens_out,
                 cost_list_usd=run.cost_list_usd,
                 diff_sha256=run.diff_sha256,
+                has_diff=bool(run.diff),
                 duration_s=_duration(run),
                 automated_pass=None if verdict is None else verdict.automated_pass,
                 heldout_pass=None if verdict is None else verdict.heldout_pass,
@@ -83,17 +84,22 @@ async def compute_snapshot(
 
     attempts = attempts_from_rows(rows)
     report = compute_metrics(attempts, agent=agent)
-    pricing_versions = sorted({run.pricing_version for run, _ in rows})
+    # Only finished runs price anything. A queued row still carries the version it
+    # will be priced under, but labelling the snapshot with it would announce a
+    # price that no run has paid yet — and with no finished run at all there is no
+    # price to label, so the payload says null rather than an empty string.
+    priced = [(run, verdict) for run, verdict in rows if run.status is RunStatus.finished]
+    pricing_versions = sorted({run.pricing_version for run, _ in priced})
     payload = as_payload(
         report,
         cost_basis=cost_basis.value,
-        pricing_version=",".join(pricing_versions),
+        pricing_version=",".join(pricing_versions) if pricing_versions else None,
     )
     snapshot = MetricSnapshot(
         id=uuid.uuid4(),
         agent=agent,
         cost_basis=cost_basis,
-        config_hash=config_hash_of(rows),
+        config_hash=config_hash_of(priced),
         payload=payload,
     )
     session.add(snapshot)

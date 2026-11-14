@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from fixjury.metrics.cost import PricingError, load_pricing, parse_pricing
+from fixjury.config import settings
+from fixjury.metrics.cost import PricingError, load_pricing, parse_pricing, pricing
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -88,12 +89,34 @@ def test_a_non_numeric_rate_is_refused() -> None:
         parse_pricing({"version": "v", "models": {"m": {"input_per_mtok": "free"}}})
 
 
-def test_the_shipped_pricing_file_is_explicitly_unpriced() -> None:
+def test_a_queued_run_and_a_finished_run_agree_on_the_version() -> None:
+    """The queue stamps the version before the run exists, so both must read one file."""
+
+    assert pricing().version == load_pricing(REPO / "config" / "pricing.yaml").version
+
+
+def test_an_unusable_pricing_file_says_so_instead_of_crashing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    broken = tmp_path / "pricing.yaml"
+    broken.write_text("version: [unclosed\n", encoding="utf-8")
+    monkeypatch.setattr(settings, "pricing_file", str(broken))
+
+    fallback = pricing()
+
+    assert fallback.version == "unpriced"
+    assert fallback.models == {}
+
+
+def test_the_shipped_pricing_file_pins_a_real_rate() -> None:
+    """Zero rates were a placeholder; a published cost needs rates that came from somewhere."""
+
     pricing = load_pricing(REPO / "config" / "pricing.yaml")
 
-    assert pricing.version.startswith("unpriced")
-    assert pricing.models == {}
-    assert pricing.sandbox_per_hour == Decimal("0")
+    assert not pricing.version.startswith("unpriced")
+    price = pricing.price_for("deepseek-v4.1-flash")
+    assert price.input_per_mtok > 0
+    assert price.output_per_mtok > 0
 
 
 def test_a_missing_file_is_reported(tmp_path: Path) -> None:

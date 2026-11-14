@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from fixjury.report.charts import corpus_split, render_charts, render_regression_split
 
 DENOMINATORS: dict[str, object] = {
     "pairs": 10,
+    "reviewed_pairs": 10,
     "accepted": 4,
     "regression_free_accepted": 3,
     "automated_pass_pairs": 6,
@@ -36,6 +35,8 @@ PAYLOAD: dict[str, object] = {
     "denominators": DENOMINATORS,
     "exclusions": {"infra_failed": 2},
     "metrics": METRICS,
+    # Computed by ``fixjury.metrics.compute``; the charts only ever read it.
+    "split": {"regression_free": 0.3, "with_regression": 0.1, "not_accepted": 0.6},
 }
 
 
@@ -67,27 +68,30 @@ def test_two_agents_fit_on_one_chart(tmp_path: Path) -> None:
     assert charts["acceptance"].exists()
 
 
-def test_the_corpus_split_is_computed_once_and_adds_up_to_one() -> None:
-    split = corpus_split(PAYLOAD)
-
-    assert split == {"regression_free": 0.3, "with_regression": 0.1, "not_accepted": 0.6}
-    assert sum(split.values()) == pytest.approx(1.0)
-
-
-def test_a_zero_denominator_gives_an_empty_split_not_a_division_error() -> None:
-    payload = {**PAYLOAD, "denominators": {**DENOMINATORS, "pairs": 0}}
-
-    assert set(corpus_split(payload).values()) == {0.0}
-
-
-def test_a_regression_free_count_above_the_accepted_count_is_clamped() -> None:
-    payload = {
-        **PAYLOAD,
-        "denominators": {**DENOMINATORS, "accepted": 2, "regression_free_accepted": 3},
+def test_the_chart_reads_the_split_the_snapshot_computed() -> None:
+    assert corpus_split(PAYLOAD) == {
+        "regression_free": 0.3,
+        "with_regression": 0.1,
+        "not_accepted": 0.6,
     }
 
-    split = corpus_split(payload)
 
-    assert split["regression_free"] == pytest.approx(0.2)
-    assert split["with_regression"] == 0.0
-    assert sum(split.values()) == pytest.approx(1.0), "a stack that ends past 100% is a lie"
+def test_a_split_of_nulls_is_drawn_as_a_gap_not_as_zero(tmp_path: Path) -> None:
+    unmeasured = {
+        **PAYLOAD,
+        "agent": "unreviewed",
+        "split": {"regression_free": None, "with_regression": None, "not_accepted": None},
+    }
+
+    path = render_regression_split([unmeasured, PAYLOAD], tmp_path)
+
+    assert corpus_split(unmeasured) == dict.fromkeys(
+        ("regression_free", "with_regression", "not_accepted")
+    )
+    assert path.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_a_snapshot_without_the_key_reads_as_unmeasured() -> None:
+    legacy = {key: value for key, value in PAYLOAD.items() if key != "split"}
+
+    assert set(corpus_split(legacy).values()) == {None}, "unknown is not zero"

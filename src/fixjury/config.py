@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     openhands_command: str = ""
     openhands_version: str = ""
 
+    # Bare mirrors of the task repositories: a bench clones the same repository for
+    # every run and every verification, so the network is touched once per repository.
+    # Empty means the platform temp directory.
+    checkout_cache: str = ""
+
     pricing_file: str = "config/pricing.yaml"
     # Costs stay zero until pricing lands; the label keeps such rows out of any
     # cross-version comparison instead of pretending they were priced.

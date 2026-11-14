@@ -29,10 +29,12 @@ PAYLOADS: list[dict[str, object]] = [
         "pricing_version": "fixture",
         "denominators": {
             "pairs": 4,
+            "reviewed_pairs": 4,
             "accepted": 2,
             "regression_free_accepted": 1,
             "automated_pass_pairs": 3,
             "declared_success_runs": 3,
+            "no_patch_pairs": 1,
             "missing_heldout_pairs": 0,
         },
         "exclusions": {"infra_failed": 1},
@@ -49,6 +51,8 @@ PAYLOADS: list[dict[str, object]] = [
             "tokens_total": 3000,
             "cost_total": "1.0000",
         },
+        # 1 clean of 4 reviewed, 2 accepted: the shares the snapshot would store.
+        "split": {"regression_free": 0.25, "with_regression": 0.25, "not_accepted": 0.5},
     },
     {
         "agent": "fixture-null-agent",
@@ -56,10 +60,12 @@ PAYLOADS: list[dict[str, object]] = [
         "pricing_version": "fixture",
         "denominators": {
             "pairs": 0,
+            "reviewed_pairs": 0,
             "accepted": 0,
             "regression_free_accepted": 0,
             "automated_pass_pairs": 0,
             "declared_success_runs": 0,
+            "no_patch_pairs": 0,
             "missing_heldout_pairs": 0,
         },
         "exclusions": {},
@@ -76,6 +82,8 @@ PAYLOADS: list[dict[str, object]] = [
             "tokens_total": 0,
             "cost_total": "0.0000",
         },
+        # Nothing was reviewed, so the split is unknown: null, never 0.0.
+        "split": {"regression_free": None, "with_regression": None, "not_accepted": None},
     },
 ]
 

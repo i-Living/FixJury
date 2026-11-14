@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import redis.asyncio as redis
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fixjury import queue
@@ -22,10 +23,24 @@ from fixjury.run import RunError, run_task
 from fixjury.tasks.loader import read_task, task_path
 
 LOGGER = logging.getLogger(__name__)
+# PostgreSQL: "could not obtain lock on row in relation" — raised by FOR UPDATE NOWAIT.
+LOCK_NOT_AVAILABLE = "55P03"
 
 
 class WorkerError(RuntimeError):
     """A queued item cannot be processed."""
+
+
+def _is_lock_conflict(exc: DBAPIError) -> bool:
+    """Postgres refuses a ``NOWAIT`` lock with SQLSTATE 55P03, and nothing else means "taken".
+
+    The driver's exception class is generic (``AsyncAdapt_asyncpg_dbapi.Error``), so the
+    state code is the only reliable discriminator.
+    """
+
+    orig = getattr(exc, "orig", None)
+    state = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    return state == LOCK_NOT_AVAILABLE
 
 
 def redis_client() -> queue.RedisList:
@@ -42,12 +57,37 @@ async def process_run(
     corpus_root: Path,
     image: str | None = None,
 ) -> Run:
-    """Execute one claimed run and settle the queue around it."""
+    """Execute one claimed run and settle the queue around it.
 
-    run = await session.get(Run, run_id)
+    The row is locked ``NOWAIT`` for the whole attempt: two deliveries of the same id
+    — a stale duplicate left in Redis, or a second worker — cannot both execute it,
+    and the loser backs off without blocking on a run that takes minutes. It leaves the
+    id where it found it, so a worker that dies still leaves a recoverable orphan.
+
+    This does not acknowledge the queue: ``acknowledge`` runs once the caller's
+    transaction has committed, so a crash in between leaves the id in ``processing``
+    for ``resume`` instead of leaving a run nothing will ever pick up again.
+    """
+
+    try:
+        run = await session.get(Run, run_id, with_for_update={"nowait": True})
+    except DBAPIError as exc:
+        if not _is_lock_conflict(exc):
+            raise
+        # The id stays in ``processing``: the worker that holds the lock will remove it
+        # when it settles, and if that worker dies instead, ``resume`` must still find
+        # the run. Dropping it here would leave an orphan nothing would ever requeue.
+        LOGGER.info("run %s is being worked elsewhere, leaving it to that worker", run_id)
+        raise WorkerError(f"run {run_id} is already claimed") from exc
     if run is None:
         await queue.complete(client, str(run_id))
         raise WorkerError(f"run {run_id} is queued but missing from the database")
+    if run.finished_at is not None:
+        # A stale queue id for a run that already settled: working it again would
+        # spend tokens on a pair the report has already counted.
+        LOGGER.info("run %s for %s/%s already settled, dropping it", run_id, run.task_id, run.agent)
+        await queue.complete(client, str(run_id))
+        return run
     document = read_task(task_path(corpus_root, run.task_id))
     run.status = RunStatus.running
     run.started_at = datetime.now(UTC)
@@ -67,8 +107,6 @@ async def process_run(
         run.status = RunStatus.infra_failed
         run.finished_at = datetime.now(UTC)
         await session.flush()
-    finally:
-        await queue.complete(client, str(run_id))
 
     if run.status is RunStatus.infra_failed:
         retry = queue.next_attempt(run.attempt)
@@ -82,6 +120,18 @@ async def process_run(
                 # kill the worker: the row is the record, the queue is transport.
                 LOGGER.warning("no retry queued for %s: %s", run.id, exc)
     return run
+
+
+async def acknowledge(client: queue.RedisList, run_id: uuid.UUID | str) -> None:
+    """Drop a settled run's id from ``processing`` — after its transaction commits.
+
+    Acknowledging before the commit is the one ordering that loses work: the process
+    dies, the database rolls back to a run that never settled, and Redis no longer has
+    the id, so ``resume`` has nothing to recover. Committing first turns that crash into
+    a duplicate delivery instead, which the row lock and ``finished_at`` both survive.
+    """
+
+    await queue.complete(client, str(run_id))
 
 
 async def work_once(

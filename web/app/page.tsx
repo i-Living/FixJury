@@ -44,7 +44,7 @@ export default function Page() {
               <th className="num">95% CI</th>
               <th className="num">Regression-free</th>
               <th className="num">Task success</th>
-              <th className="num">Accepted / pairs</th>
+              <th className="num">Accepted / reviewed</th>
               <th className="num">Tokens per fix</th>
               <th className="num">Cost per fix</th>
               <th className="num">Median repair</th>
@@ -68,7 +68,7 @@ export default function Page() {
                   <Cell text={percent(metrics.task_success_rate)} />
                 </td>
                 <td className="num">
-                  {count(denominators.accepted)} / {count(denominators.pairs)}
+                  {count(denominators.accepted)} / {count(denominators.reviewed_pairs)}
                 </td>
                 <td className="num">
                   <Cell text={amount(metrics.tokens_per_accepted_fix)} />
@@ -188,9 +188,11 @@ export default function Page() {
             <tr>
               <th>Agent</th>
               <th className="num">Pairs</th>
+              <th className="num">Reviewed</th>
               <th className="num">Accepted</th>
               <th className="num">Regression-free</th>
               <th className="num">Automated pass</th>
+              <th className="num">No patch</th>
               <th className="num">Missing held-out</th>
               <th>Excluded</th>
               <th>Pricing version</th>
@@ -201,9 +203,11 @@ export default function Page() {
               <tr key={agent.agent}>
                 <td className="agent">{agent.agent}</td>
                 <td className="num">{count(agent.denominators.pairs)}</td>
+                <td className="num">{count(agent.denominators.reviewed_pairs)}</td>
                 <td className="num">{count(agent.denominators.accepted)}</td>
                 <td className="num">{count(agent.denominators.regression_free_accepted)}</td>
                 <td className="num">{count(agent.denominators.automated_pass_pairs)}</td>
+                <td className="num">{count(agent.denominators.no_patch_pairs)}</td>
                 <td className="num">{count(agent.denominators.missing_heldout_pairs)}</td>
                 <td>{exclusions(agent.exclusions)}</td>
                 <td>
@@ -222,7 +226,9 @@ export default function Page() {
             better than one that does not.
           </li>
           <li>
-            <code>null</code> means the denominator was zero: a zero denominator is not zero cost.
+            <code>null</code> means the denominator was zero: a zero denominator is not zero cost or
+            zero acceptance. Acceptance counts reviewed pairs only; a pair no reviewer has seen is
+            unknown, not rejected.
           </li>
           <li>
             A missing held-out result is a data defect, not a pass: those pairs leave the

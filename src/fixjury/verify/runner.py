@@ -16,14 +16,19 @@ overwrite the tests that judge it.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
 import shutil
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 from fixjury.models import RejectionCode
-from fixjury.run import checkout_base
+from fixjury.run import RunError, checkout_workspace
 from fixjury.sandbox.container import SandboxSpec, open_sandbox
+from fixjury.sandbox.network import open_run_network
+from fixjury.sandbox.proxy import AllowlistProxy, proxy_environment
 from fixjury.sandbox.tools import ExecResult, exec_command
 from fixjury.tasks.heldout import HELDOUT_FILES_DIRNAME, read_heldout
 from fixjury.tasks.schema import CheckTool, TaskDocument, parse_check
@@ -31,6 +36,30 @@ from fixjury.verify.policy import PolicyResult, Violation, check_policy
 from fixjury.verify.verdict import CheckOutcome, VerificationResult, assemble
 
 LOGGER = logging.getLogger(__name__)
+# The hosts pip needs and nothing else: an index and the files it serves.
+INDEX_TARGETS = ("pypi.org:443", "files.pythonhosted.org:443")
+# ``git describe`` reads a local checkout; a hung one is a bug, not patience.
+GIT_QUERY_TIMEOUT_S = 30.0
+# A tag may carry a project prefix and a free-form suffix; the version inside it does not.
+TAG_VERSION = re.compile(
+    r"v?"
+    r"(?P<release>\d+(?:\.\d+)*)"
+    r"(?:[-_.]?(?P<label>a|alpha|b|beta|c|rc|pre|preview)[-_.]?(?P<number>\d+)?)?"
+    r"(?:[-_.]?(?P<post>post|rev|r)[-_.]?(?P<post_number>\d+)?)?"
+    r"(?:[-_.]?(?P<dev>dev)[-_.]?(?P<dev_number>\d+)?)?"
+    r"(?:[-_.](?P<import_number>\d+))?"
+    r"(?P<local>\+[0-9A-Za-z.\-]+)?$"
+)
+PRE_RELEASE_LABELS = {
+    "a": "a",
+    "alpha": "a",
+    "b": "b",
+    "beta": "b",
+    "c": "rc",
+    "rc": "rc",
+    "pre": "rc",
+    "preview": "rc",
+}
 VENV = ".venv"
 VENV_BIN = f"/workspace/{VENV}/bin"
 PATH_WITH_VENV = f"{VENV_BIN}:/usr/local/bin:/usr/bin:/bin"
@@ -94,22 +123,109 @@ def check_argv(command: str) -> list[str]:
     return [parsed.tool.value, *parsed.args]
 
 
-async def _install(spec: SandboxSpec) -> None:
-    async with open_sandbox(spec) as sandbox:
-        for step in INSTALL_STEPS:
-            result = await exec_command(
-                sandbox,
-                step,
-                timeout_s=600.0,
-                workdir="/workspace",
-                env={"PATH": PATH_WITH_VENV},
-            )
-            if result.exit_code == 0:
-                continue
-            if step[-1] == ".[dev]":
-                # A project without a dev extra is not a broken project.
-                continue
-            raise VerificationError(f"{' '.join(step)} failed: {result.output.strip()[-600:]}")
+def scm_version_env(workspace: Path) -> dict[str, str]:
+    """A version for projects that read it from git, which the sandbox does not have.
+
+    The prepare image is ``python:slim``: no git binary, so hatch-vcs and
+    setuptools-scm cannot read the tag and the install dies while generating
+    metadata. The nearest tag is resolved here, on the checkout the container sees,
+    so the version stays the real one instead of a made-up constant.
+    """
+
+    git = shutil.which("git")
+    if git is None:
+        return {}
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            [git, "-C", str(workspace), "describe", "--tags", "--abbrev=0"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=GIT_QUERY_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        # A hung lookup must not hold the verification: the install is what matters.
+        LOGGER.warning("git describe timed out in %s", workspace)
+        return {}
+    tag = completed.stdout.strip()
+    if completed.returncode != 0 or not tag:
+        return {}
+    version = _version_from_tag(tag)
+    if version is None:
+        LOGGER.warning("no version in tag %r; installing without one", tag)
+        return {}
+    return {"SETUPTOOLS_SCM_PRETEND_VERSION": version}
+
+
+def _version_from_tag(tag: str) -> str | None:
+    """The version inside a tag, not the whole tag: projects prefix them (``demo-v1.4.2``).
+
+    ``SETUPTOOLS_SCM_PRETEND_VERSION`` is compared as a version, so a project prefix
+    that the backend's own ``tag_regex`` would strip must be stripped here too.
+    """
+
+    match = TAG_VERSION.search(tag)
+    if match is None:
+        return None
+    parts = [match["release"]]
+    if match["label"]:
+        parts.append(PRE_RELEASE_LABELS[match["label"]] + (match["number"] or "0"))
+    if match["post"]:
+        parts.append(f".post{match['post_number'] or '0'}")
+    if match["dev"]:
+        parts.append(f".dev{match['dev_number'] or '0'}")
+    if match["import_number"]:
+        # A bare trailing number is a build after the release: ``v2.0.0-1`` is 2.0.0.post1.
+        parts.append(f".post{match['import_number']}")
+    return "".join(parts) + (match["local"] or "")
+
+
+async def _install(spec: SandboxSpec, *, extra_env: dict[str, str] | None = None) -> None:
+    """Install the project, with the package index as the only host it can reach.
+
+    The install runs build backends taken from the diff, so it is not a container that
+    executes no agent-authored code: giving it the open internet would make a patch a
+    way to call any endpoint. The index is the one host pip needs, and an allowlisting
+    proxy on an internal network is the only route there — clearing proxy variables in
+    the container does not reach anything else.
+    """
+
+    env = {"PATH": PATH_WITH_VENV, **(extra_env or {})}
+    async with open_run_network() as network:
+        proxy = AllowlistProxy(allowed=set(INDEX_TARGETS))
+        proxy.host = network.gateway
+        await proxy.start()
+        try:
+            install_spec = replace(spec, network_name=network.name, network=False)
+            async with open_sandbox(install_spec) as sandbox:
+                for step in INSTALL_STEPS:
+                    result = await exec_command(
+                        sandbox,
+                        step,
+                        timeout_s=600.0,
+                        workdir="/workspace",
+                        env={**env, **proxy_environment(proxy.url)},
+                    )
+                    if result.exit_code == 0:
+                        continue
+                    if step[-1] == ".[dev]":
+                        # A project without a dev extra is not a broken project.
+                        continue
+                    raise VerificationError(
+                        f"{' '.join(step)} failed: {result.output.strip()[-600:]}"
+                    )
+        finally:
+            await proxy.stop()
+
+
+async def _attempt_install(spec: SandboxSpec, extra_env: dict[str, str]) -> str | None:
+    """Install the project, returning the failure instead of raising: see ``verify_workspace``."""
+
+    try:
+        await _install(spec, extra_env=extra_env)
+    except VerificationError as exc:
+        return str(exc)
+    return None
 
 
 async def _run_checks(
@@ -200,7 +316,7 @@ async def verify_workspace(
         forbidden=document.forbidden,
     )
 
-    checkout_base(document.repo, base_commit, workspace)
+    await checkout_workspace(document.repo, base_commit, workspace)
     try:
         apply_patch(workspace, diff)
     except VerificationError as exc:
@@ -214,7 +330,51 @@ async def verify_workspace(
         )
 
     prepared = SandboxSpec(image=image, workspace=workspace, network=True, timeout_s=1800)
-    await _install(prepared)
+    # Read before the first install, and then never again: the install runs a build
+    # backend from the diff, so the ``.git`` it may have rewritten is not a place to
+    # point host git later. One lookup, reused by the retry and by the comparison.
+    patched_env = await asyncio.to_thread(scm_version_env, workspace)
+    patched_failure = await _attempt_install(prepared, patched_env)
+    # A single failed install is not evidence: a resolver can time out on the network.
+    # Only an install that fails twice is worth blaming on the diff.
+    if patched_failure is not None:
+        patched_failure = await _attempt_install(prepared, patched_env)
+    if patched_failure is not None:
+        # Whose failure it is decides how the pair is counted, and the exit status does
+        # not say. The same install on the base commit does: if it fails there too, no
+        # diff could have been verified and the pair is an exclusion; if it succeeds,
+        # the diff broke a build that worked, which is a failed fix.
+        #
+        # The base gets its own checkout rather than a revert: the install runs a build
+        # backend from the diff, with the workspace mounted writable, so ``.git`` is
+        # untrusted by then. Running host git against it — even ``reset --hard`` — hands
+        # that backend hooks, filters and config that execute on the host.
+        base_workspace = workspace.with_name(f"{workspace.name}-base")
+        try:
+            await checkout_workspace(document.repo, base_commit, base_workspace)
+        except RunError as exc:
+            raise VerificationError(f"cannot check out the base commit to compare: {exc}") from exc
+        try:
+            base_spec = SandboxSpec(
+                image=image, workspace=base_workspace, network=True, timeout_s=1800
+            )
+            base_env = await asyncio.to_thread(scm_version_env, base_workspace)
+            base_failure = await _attempt_install(base_spec, base_env)
+        finally:
+            shutil.rmtree(base_workspace, ignore_errors=True)
+        if base_failure is not None:
+            raise VerificationError(
+                f"install fails on the base commit too ({base_failure}); "
+                f"with the diff applied: {patched_failure}"
+            )
+        return assemble(
+            (),
+            policy=policy,
+            heldout_pass=None,
+            tool_versions={},
+            extra_violations=(Violation(RejectionCode.BUILD_BREAK, patched_failure),),
+            note="the diff breaks an install that works on the base commit",
+        )
 
     running = SandboxSpec(image=image, workspace=workspace, network=False, timeout_s=1800)
     outcomes, heldout_pass, versions = await _run_checks(

@@ -44,9 +44,10 @@ class SandboxSpec:
     pids_limit: int = 256
     tmpfs_mb: int = 512
     timeout_s: int = 1200
-    # Network is off for anything that runs an agent. It is switched on for the
-    # preparation container only, which installs dependencies and executes no
-    # agent-authored code.
+    # Network is off for anything that runs an agent. A preparation container may ask
+    # for the open internet with this flag, but verification does not: an install runs
+    # build backends taken from the diff, so it gets a named network behind the
+    # allowlisting proxy instead, where the package index is the only host.
     network: bool = False
     # A named network wins over `network`. An agent harness gets its own internal
     # bridge, where the only reachable host is the platform's egress proxy, so

@@ -18,17 +18,19 @@ BASIS_LABELS = {
 
 
 def _percent(value: object) -> str:
+    # `null`, not a dash and not a zero: an unreviewed corpus has no rate, and a
+    # reader must not mistake one for the other.
     if not isinstance(value, int | float):
-        return "—"
+        return "null"
     return f"{value * 100:.1f}%"
 
 
 def _interval(block: object) -> str:
     if not isinstance(block, dict):
-        return "—"
+        return "null"
     low, high = block.get("low"), block.get("high")
     if not isinstance(low, int | float) or not isinstance(high, int | float):
-        return "—"
+        return "null"
     return f"{low * 100:.1f}-{high * 100:.1f}%"
 
 
@@ -72,7 +74,7 @@ def render_agent_table(payload: Mapping[str, object]) -> str:
         f"| {_interval(metrics.get('human_acceptance_ci'))} "
         f"| {_percent(metrics.get('regression_free_acceptance_rate'))} "
         f"| {_percent(metrics.get('task_success_rate'))} "
-        f"| {accepted}/{_count(denominators.get('pairs'))} "
+        f"| {accepted}/{_count(denominators.get('reviewed_pairs'))} "
         f"| {_number(metrics.get('tokens_per_accepted_fix'))} "
         f"| {_number(metrics.get('cost_per_accepted_fix'))} "
         f"| {_number(metrics.get('median_time_to_repair_s'), suffix=' s')} "
@@ -98,7 +100,7 @@ def render_report(
         "",
         "## Acceptance and success",
         "",
-        "| Agent | Acceptance | 95% CI | Regression-free | Task success | Accepted/pairs "
+        "| Agent | Acceptance | 95% CI | Regression-free | Task success | Accepted/reviewed "
         "| Tokens per accepted fix | Cost per accepted fix | Median repair "
         "| False completion |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
@@ -106,13 +108,14 @@ def render_report(
     lines += [render_agent_table(payload) for payload in snapshots]
     lines += [
         "",
-        "`null` means the denominator was zero: a zero denominator is not zero cost.",
+        "`null` means the denominator was zero: a zero denominator is not zero cost or zero "
+        "acceptance.",
         "",
         "## Denominators and exclusions",
         "",
-        "| Agent | Pairs | Accepted | Regression-free | Automated pass | Declared success "
-        "| Missing held-out | Excluded | Pricing version |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Agent | Pairs | Reviewed | Accepted | Regression-free | Automated pass "
+        "| Declared success | No patch | Missing held-out | Excluded | Pricing version |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for payload in snapshots:
         denominators = _denominators(payload)
@@ -125,10 +128,12 @@ def render_report(
         lines.append(
             f"| {payload.get('agent', '?')} "
             f"| {_count(denominators.get('pairs'))} "
+            f"| {_count(denominators.get('reviewed_pairs'))} "
             f"| {_count(denominators.get('accepted'))} "
             f"| {_count(denominators.get('regression_free_accepted'))} "
             f"| {_count(denominators.get('automated_pass_pairs'))} "
             f"| {_count(denominators.get('declared_success_runs'))} "
+            f"| {_count(denominators.get('no_patch_pairs'))} "
             f"| {_count(denominators.get('missing_heldout_pairs'))} "
             f"| {excluded} "
             f"| {payload.get('pricing_version', '?')} |"
@@ -139,8 +144,12 @@ def render_report(
         "",
         "- Denominators are **pairs (task, agent)**, not attempts: an agent that retries must not "
         "look better than one that does not.",
-        "- `heldout_pass = null` is a data defect, not a pass: such pairs are excluded from the "
-        "regression-free rate and counted above.",
+        "- Acceptance and false completion are computed over **reviewed** pairs only; a pair no "
+        "reviewer has seen is unknown, not rejected.",
+        "- A pair with no patch is a failed pair, not a missing one: it stays in the denominator "
+        "and is counted above.",
+        "- `heldout_pass = null` on a pair that did produce a patch is a data defect, not a pass: "
+        "such pairs are excluded from the regression-free rate and counted above.",
         "- Costs computed under different `pricing_version` values are not comparable.",
         "",
     ]

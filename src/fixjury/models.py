@@ -91,6 +91,11 @@ class RejectionCode(StrEnum):
     TIMEOUT_LIMIT = "TIMEOUT_LIMIT"
 
 
+# A run can only be read as an exclusion if the reason fits the column it is stored
+# in: an adapter builds it from a git message, and PostgreSQL rejects the overflow.
+UNABLE_REASON_LENGTH = 120
+
+
 class Base(DeclarativeBase):
     pass
 
@@ -139,6 +144,9 @@ class Run(Base):
         SAEnum(RunStatus, name="run_status"), default=RunStatus.queued
     )
     declared_success: Mapped[bool | None]
+    # Why the adapter could not produce a patch. Without it an empty diff is
+    # indistinguishable from a crashed harness.
+    unable_reason: Mapped[str | None] = mapped_column(String(UNABLE_REASON_LENGTH))
     diff: Mapped[str | None] = mapped_column(Text)
     diff_sha256: Mapped[str | None] = mapped_column(String(64))
     tokens_in: Mapped[int] = mapped_column(Integer, default=0)

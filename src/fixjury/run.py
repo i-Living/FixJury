@@ -7,9 +7,11 @@ written here, so an adapter cannot report a verdict about itself.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
@@ -25,8 +27,15 @@ from fixjury.agents.base import AgentResult, LlmConfig, RunRequest
 from fixjury.agents.baseline import DEFAULT_MAX_STEPS
 from fixjury.agents.registry import build_adapter
 from fixjury.config import settings
-from fixjury.metrics.cost import Pricing, PricingError, load_pricing
-from fixjury.models import CutoffAssumption, Difficulty, Run, RunStatus, Task
+from fixjury.metrics.cost import pricing
+from fixjury.models import (
+    UNABLE_REASON_LENGTH,
+    CutoffAssumption,
+    Difficulty,
+    Run,
+    RunStatus,
+    Task,
+)
 from fixjury.sandbox.container import SandboxError
 from fixjury.spec.render import task_payload
 from fixjury.tasks.schema import TaskDocument
@@ -34,20 +43,35 @@ from fixjury.telemetry import current_trace_id, span
 
 LOGGER = logging.getLogger(__name__)
 WORKSPACE_PREFIX = "fixjury-run-"
+CHECKOUT_CACHE_DIRNAME = "fixjury-repos"
+# A clone of a real repository takes seconds; ten minutes means git is waiting for
+# something that will never come, and the bench has no way to notice on its own.
+CHECKOUT_TIMEOUT_S = 600.0
+
+
+def bounded_reason(reason: str | None) -> str | None:
+    """A reason that fits ``runs.unable_reason``.
+
+    An adapter builds the reason from a failure message, and a git error can be long;
+    PostgreSQL rejects the overflow at flush, which would throw away the run and its
+    usage after the agent had already finished. The tail is kept — that is where the
+    error names what went wrong.
+    """
+
+    if reason is None:
+        return None
+    text = reason.strip()
+    if len(text) <= UNABLE_REASON_LENGTH:
+        return text or None
+    return "…" + text[-(UNABLE_REASON_LENGTH - 1) :]
 
 
 class RunError(RuntimeError):
     """A run cannot be prepared or completed."""
 
 
-def pricing() -> Pricing:
-    """Pricing is configuration: a broken file must not crash a run."""
-
-    try:
-        return load_pricing(Path(settings.pricing_file))
-    except PricingError as exc:
-        LOGGER.warning("pricing file unusable, costing nothing: %s", exc)
-        return Pricing(version="unpriced", currency="USD", models={})
+# Re-exported: the file it reads is configuration, the module that owns that
+# reading is the cost module, and both the queue and a run must agree on it.
 
 
 def agent_spec_text(document: TaskDocument) -> str:
@@ -119,27 +143,185 @@ def checkout_base(repo_url: str, base_commit: str, dest: Path) -> None:
     No ``--filter``: a partial clone left the checkout without blobs in this
     environment, and a checkout that silently misses files is worse than a
     slightly slower clone.
+
+    Every run and every verification of the same task clones the same repository, and
+    a fetch that stalls on the network costs the whole benchmark — one pair hung for
+    ten minutes on a clone that takes five seconds. So the repository is fetched once
+    into a bare mirror and the workspaces are cloned from it locally: the network is
+    touched once per repository, and a stall can only happen there.
+
+    ``GIT_TERMINAL_PROMPT=0`` is not decoration either: git asked for credentials on a
+    repository that does not need them and blocked on an inherited pipe.
     """
 
     git = _git()
     dest.mkdir(parents=True, exist_ok=True)
-    commands = [
-        [git, "clone", "--quiet", "--no-checkout", repo_url, str(dest)],
-        [git, "-C", str(dest), "checkout", "--quiet", base_commit],
-        [git, "-C", str(dest), "rev-parse", "HEAD"],
-    ]
-    outputs: list[str] = []
-    for argv in commands:
-        completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
-            argv, capture_output=True, text=True, check=False
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    mirror = _ensure_mirror(repo_url, git, env)
+    if mirror is not None and _clone_local(git, mirror, dest, base_commit, env):
+        return
+    if mirror is not None:
+        # The cached mirror may predate the commit: fetch it once and try again.
+        refresh_mirror(repo_url)
+        shutil.rmtree(dest, ignore_errors=True)
+        dest.mkdir(parents=True, exist_ok=True)
+        if _clone_local(git, mirror, dest, base_commit, env):
+            return
+        # A mirror that cannot serve this commit — behind the remote, or half written
+        # by a killed run — is not a reason to fail the pair.
+        shutil.rmtree(dest, ignore_errors=True)
+        dest.mkdir(parents=True, exist_ok=True)
+    _clone_network(git, repo_url, dest, base_commit, env)
+
+
+async def checkout_workspace(repo_url: str, base_commit: str, workspace: Path) -> None:
+    """Check out the base commit without blocking the loop, and survive cancellation.
+
+    git is a blocking subprocess, so it runs on a thread — and a thread cannot be
+    interrupted. If this coroutine is cancelled mid-clone, the caller's cleanup would
+    delete the workspace while git is still writing to it, and git would put it back.
+    The deletion is therefore handed to the thread's own completion.
+    """
+
+    checkout = asyncio.ensure_future(
+        asyncio.to_thread(checkout_base, repo_url, base_commit, workspace)
+    )
+    try:
+        await asyncio.shield(checkout)
+    except asyncio.CancelledError:
+        checkout.add_done_callback(lambda task: _discard_after(task, workspace))
+        raise
+
+
+def _discard_after(task: asyncio.Future[None], workspace: Path) -> None:
+    if not task.cancelled():
+        task.exception()  # retrieved here: nobody awaits a cancelled run's checkout
+    shutil.rmtree(workspace, ignore_errors=True)
+
+
+def mirror_path(repo_url: str) -> Path:
+    """Where the bare mirror of ``repo_url`` lives; one directory per repository."""
+
+    root = (
+        Path(settings.checkout_cache)
+        if settings.checkout_cache
+        else Path(tempfile.gettempdir()) / CHECKOUT_CACHE_DIRNAME
+    )
+    return root / hashlib.sha256(repo_url.encode("utf-8")).hexdigest()[:16]
+
+
+def _run_git(argv: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(  # noqa: S603 - fixed argv, no shell
+            argv,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+            timeout=CHECKOUT_TIMEOUT_S,
         )
-        if completed.returncode != 0:
-            message = completed.stderr.strip() or completed.stdout.strip()
-            raise RunError(f"{' '.join(argv[:3])} failed: {message}")
-        outputs.append(completed.stdout)
-    head = outputs[-1].strip()
-    if head != base_commit:
-        raise RunError(f"checked out {head}, expected {base_commit}")
+    except subprocess.TimeoutExpired as exc:
+        raise RunError(f"{' '.join(argv[:3])} did not finish in {CHECKOUT_TIMEOUT_S:.0f}s") from exc
+
+
+def _ensure_mirror(repo_url: str, git: str, env: dict[str, str]) -> Path | None:
+    """The bare mirror of ``repo_url``, fetched only if it is not cached yet."""
+
+    mirror = mirror_path(repo_url)
+    if (mirror / "HEAD").is_file():
+        return mirror
+    mirror.parent.mkdir(parents=True, exist_ok=True)
+    staging = mirror.with_name(f"{mirror.name}.{os.getpid()}")
+    shutil.rmtree(staging, ignore_errors=True)
+    # ``--mirror``, not ``--bare``: it records every ref in the fetch refspec, so a
+    # refresh also brings branches other than the default one.
+    completed = _run_git([git, "clone", "--quiet", "--mirror", repo_url, str(staging)], env)
+    if completed.returncode != 0:
+        shutil.rmtree(staging, ignore_errors=True)
+        LOGGER.warning("cannot cache %s: %s", repo_url, completed.stderr.strip())
+        return None
+    try:
+        os.replace(staging, mirror)
+    except OSError:
+        # Another worker cached it first; its copy is as good as this one.
+        shutil.rmtree(staging, ignore_errors=True)
+    return mirror if (mirror / "HEAD").is_file() else None
+
+
+def _clone_local(git: str, mirror: Path, dest: Path, base_commit: str, env: dict[str, str]) -> bool:
+    """Clone from the mirror and check out the commit; ``False`` if the mirror is stale."""
+
+    # ``--no-hardlinks`` copies the objects instead of sharing inodes with the mirror.
+    # The workspace is mounted read-write into the sandbox, so an agent that rewrites
+    # its object store would otherwise edit the cache — and every later checkout of it.
+    clone = _run_git(
+        [
+            git,
+            "clone",
+            "--quiet",
+            "--no-checkout",
+            "--local",
+            "--no-hardlinks",
+            str(mirror),
+            str(dest),
+        ],
+        env,
+    )
+    if clone.returncode != 0:
+        return False
+    return _checkout(git, dest, base_commit, env)
+
+
+def _clone_network(
+    git: str, repo_url: str, dest: Path, base_commit: str, env: dict[str, str]
+) -> None:
+    clone = _run_git([git, "clone", "--quiet", "--no-checkout", repo_url, str(dest)], env)
+    if clone.returncode != 0:
+        message = clone.stderr.strip() or clone.stdout.strip()
+        raise RunError(f"git clone failed: {message}")
+    if not _checkout(git, dest, base_commit, env):
+        raise RunError(f"commit {base_commit} is not in {repo_url}")
+
+
+def _checkout(git: str, dest: Path, base_commit: str, env: dict[str, str]) -> bool:
+    """Check out ``base_commit`` and confirm it; ``False`` when the clone lacks it."""
+
+    checkout = _run_git([git, "-C", str(dest), "checkout", "--quiet", base_commit], env)
+    if checkout.returncode != 0:
+        return False
+    head = _run_git([git, "-C", str(dest), "rev-parse", "HEAD"], env)
+    if head.returncode != 0:
+        return False
+    actual = head.stdout.strip()
+    if actual != base_commit:
+        raise RunError(f"checked out {actual}, expected {base_commit}")
+    return True
+
+
+def refresh_mirror(repo_url: str) -> None:
+    """Fetch the mirror again, for a commit that landed after it was cached."""
+
+    git = _git()
+    mirror = mirror_path(repo_url)
+    if not (mirror / "HEAD").is_file():
+        return
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    # The refspec is explicit: a cache written by an older build was cloned ``--bare``
+    # and has no fetch refspec at all, so ``fetch origin`` would leave it stale forever.
+    _run_git(
+        [
+            git,
+            "-C",
+            str(mirror),
+            "fetch",
+            "--quiet",
+            "--prune",
+            "origin",
+            "+refs/heads/*:refs/heads/*",
+            "+refs/tags/*:refs/tags/*",
+        ],
+        env,
+    )
 
 
 def _task_row(document: TaskDocument) -> Task:
@@ -225,7 +407,7 @@ async def run_task(
     status = RunStatus.finished
     result: AgentResult | None = None
     try:
-        checkout_base(document.repo, base_commit, workspace)
+        await checkout_workspace(document.repo, base_commit, workspace)
         with span(
             "run",
             {
@@ -267,6 +449,7 @@ async def run_task(
     stored.model = model
     stored.status = status
     stored.declared_success = None if result is None else result.declared_success
+    stored.unable_reason = None if result is None else bounded_reason(result.unable_reason)
     stored.diff = None if result is None else result.diff
     stored.diff_sha256 = None if result is None else result.diff_sha256
     stored.tokens_in = 0 if result is None else result.tokens_in
