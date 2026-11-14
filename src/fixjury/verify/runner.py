@@ -78,7 +78,9 @@ def restore_base(workspace: Path, base_commit: str) -> None:
         raise VerificationError("git is not installed")
     for argv in (
         [git, "-C", str(workspace), "reset", "--hard", "--quiet", base_commit],
-        [git, "-C", str(workspace), "clean", "-fdq"],
+        # ``-x`` as well: ``.venv/`` is ignored by every Python project, so without it
+        # the baseline install would reuse the environment the diff just built.
+        [git, "-C", str(workspace), "clean", "-fdxq"],
     ):
         completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
             argv, capture_output=True, text=True, check=False
@@ -153,6 +155,16 @@ async def _install(spec: SandboxSpec, *, extra_env: dict[str, str] | None = None
                 # A project without a dev extra is not a broken project.
                 continue
             raise VerificationError(f"{' '.join(step)} failed: {result.output.strip()[-600:]}")
+
+
+async def _attempt_install(spec: SandboxSpec, workspace: Path) -> str | None:
+    """Install the project, returning the failure instead of raising: see ``verify_workspace``."""
+
+    try:
+        await _install(spec, extra_env=scm_version_env(workspace))
+    except VerificationError as exc:
+        return str(exc)
+    return None
 
 
 async def _run_checks(
@@ -257,28 +269,29 @@ async def verify_workspace(
         )
 
     prepared = SandboxSpec(image=image, workspace=workspace, network=True, timeout_s=1800)
-    try:
-        await _install(prepared, extra_env=scm_version_env(workspace))
-    except VerificationError as patched_failure:
-        # An install that fails after the patch is applied is either the patch's doing
-        # or the environment's, and the exit status does not say which. The same install
-        # on the base commit does: if it fails there too, no diff could have been
-        # verified and the pair is an exclusion; if it succeeds, the diff broke a build
-        # that worked, which is a failed fix, not a missing observation.
+    patched_failure = await _attempt_install(prepared, workspace)
+    # A single failed install is not evidence: a resolver can time out on the network.
+    # Only an install that fails twice is worth blaming on the diff.
+    if patched_failure is not None:
+        patched_failure = await _attempt_install(prepared, workspace)
+    if patched_failure is not None:
+        # Whose failure it is decides how the pair is counted, and the exit status does
+        # not say. The same install on the base commit does: if it fails there too, no
+        # diff could have been verified and the pair is an exclusion; if it succeeds,
+        # the diff broke a build that worked, which is a failed fix.
         restore_base(workspace, base_commit)
-        try:
-            await _install(prepared, extra_env=scm_version_env(workspace))
-        except VerificationError as base_failure:
+        base_failure = await _attempt_install(prepared, workspace)
+        if base_failure is not None:
             raise VerificationError(
                 f"install fails on the base commit too ({base_failure}); "
                 f"with the diff applied: {patched_failure}"
-            ) from patched_failure
+            )
         return assemble(
             (),
             policy=policy,
             heldout_pass=None,
             tool_versions={},
-            extra_violations=(Violation(RejectionCode.BUILD_BREAK, str(patched_failure)),),
+            extra_violations=(Violation(RejectionCode.BUILD_BREAK, patched_failure),),
             note="the diff breaks an install that works on the base commit",
         )
 

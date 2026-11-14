@@ -61,7 +61,8 @@ async def process_run(
 
     The row is locked ``NOWAIT`` for the whole attempt: two deliveries of the same id
     — a stale duplicate left in Redis, or a second worker — cannot both execute it,
-    and the loser drops the id without blocking on a run that takes minutes.
+    and the loser backs off without blocking on a run that takes minutes. It leaves the
+    id where it found it, so a worker that dies still leaves a recoverable orphan.
     """
 
     try:
@@ -69,8 +70,10 @@ async def process_run(
     except DBAPIError as exc:
         if not _is_lock_conflict(exc):
             raise
-        LOGGER.info("run %s is being worked elsewhere, dropping this delivery", run_id)
-        await queue.complete(client, str(run_id))
+        # The id stays in ``processing``: the worker that holds the lock will remove it
+        # when it settles, and if that worker dies instead, ``resume`` must still find
+        # the run. Dropping it here would leave an orphan nothing would ever requeue.
+        LOGGER.info("run %s is being worked elsewhere, leaving it to that worker", run_id)
         raise WorkerError(f"run {run_id} is already claimed") from exc
     if run is None:
         await queue.complete(client, str(run_id))
