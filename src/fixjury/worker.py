@@ -48,6 +48,12 @@ async def process_run(
     if run is None:
         await queue.complete(client, str(run_id))
         raise WorkerError(f"run {run_id} is queued but missing from the database")
+    if run.finished_at is not None:
+        # A stale queue id for a run that already settled: working it again would
+        # spend tokens on a pair the report has already counted.
+        LOGGER.info("run %s for %s/%s already settled, dropping it", run_id, run.task_id, run.agent)
+        await queue.complete(client, str(run_id))
+        return run
     document = read_task(task_path(corpus_root, run.task_id))
     run.status = RunStatus.running
     run.started_at = datetime.now(UTC)

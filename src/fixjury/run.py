@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
@@ -34,6 +35,9 @@ from fixjury.telemetry import current_trace_id, span
 
 LOGGER = logging.getLogger(__name__)
 WORKSPACE_PREFIX = "fixjury-run-"
+# A clone of a real repository takes seconds; ten minutes means git is waiting for
+# something that will never come, and the bench has no way to notice on its own.
+CHECKOUT_TIMEOUT_S = 600.0
 
 
 class RunError(RuntimeError):
@@ -113,10 +117,16 @@ def checkout_base(repo_url: str, base_commit: str, dest: Path) -> None:
     No ``--filter``: a partial clone left the checkout without blobs in this
     environment, and a checkout that silently misses files is worse than a
     slightly slower clone.
+
+    ``GIT_TERMINAL_PROMPT=0`` and a deadline are not decoration: git asked for
+    credentials on a repository that does not need them, read from an inherited pipe
+    and blocked forever, and the bench sat on one pair for ten minutes with no output
+    to show for it.
     """
 
     git = _git()
     dest.mkdir(parents=True, exist_ok=True)
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
     commands = [
         [git, "clone", "--quiet", "--no-checkout", repo_url, str(dest)],
         [git, "-C", str(dest), "checkout", "--quiet", base_commit],
@@ -124,9 +134,17 @@ def checkout_base(repo_url: str, base_commit: str, dest: Path) -> None:
     ]
     outputs: list[str] = []
     for argv in commands:
-        completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
-            argv, capture_output=True, text=True, check=False
-        )
+        try:
+            completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
+                argv,
+                capture_output=True,
+                text=True,
+                check=False,
+                env=env,
+                timeout=CHECKOUT_TIMEOUT_S,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RunError(f"{' '.join(argv[:3])} did not finish in {CHECKOUT_TIMEOUT_S}s") from exc
         if completed.returncode != 0:
             message = completed.stderr.strip() or completed.stdout.strip()
             raise RunError(f"{' '.join(argv[:3])} failed: {message}")

@@ -70,6 +70,9 @@ async def enqueue(
             raise QueueError(
                 f"run {existing.id} for {task_id}/{agent}/{attempt} is already {state}"
             )
+        # Drop any stale id first: re-running a bench pushes the same row again, and
+        # a duplicated id means the pair is worked, and paid for, twice.
+        await client.lrem(QUEUED_KEY, 0, str(existing.id))
         await client.rpush(QUEUED_KEY, str(existing.id))
         return existing
 
