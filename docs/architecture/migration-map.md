@@ -103,6 +103,11 @@ demonstrate before the next one starts.
 | 2.5 | aggregation and critical rules | `judge/aggregate.py`, unit tests | `ACCEPTED` impossible with a failed automated check; `INCONCLUSIVE` never becomes `ACCEPTED` |
 | 2.6 | observability | `judge/evaluator.py`, persistence, integration test | provider, model, prompt version, config hash, tokens, cost and latency stored per assessment |
 | 2.7 | calibration | `metrics/calibration.py`, `metrics/compute.py`, `tests/unit/test_metrics_calibration.py` | false acceptance/rejection, agreement, escalation frequency computed from rows; missing human labels reported as missing |
+
+The calibration runs over the judged corpus rather than a synthetic dataset: with decision 1 the
+standard workflow has no human labels, and the held-out suite is the only label no model produced.
+Every judged pair with a held-out outcome is therefore a known example, and a pair without one is
+reported as unlabelled — a synthetic corpus would have to invent the labels this one already has.
 | 3.2 | adapter SDK wrapper | `agents/sdk.py`, unit tests | five lifecycle methods over `run()`; adapters unchanged; no DB or global config access |
 | 3.4 | orchestration | `bench.py`, `worker.py`, `cli.py`, integration test | `bench --verify` optionally evaluates; a judge failure marks the evaluation failed, never the run |
 | 3.5 | leaderboard | `leaderboard/`, `cli.py`, tests | entries reference `corpus_version`, `config_hash`, judge config, sample size |
