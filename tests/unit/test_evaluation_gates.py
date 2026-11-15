@@ -538,3 +538,24 @@ def test_an_evaluation_without_a_digest_falls_back_to_its_findings() -> None:
 
     assert evidence_mismatch(documented_result, revised) is not None
     assert evidence_mismatch(documented_result, documented_request.checks) is None
+
+
+def test_a_policy_with_a_yaml_anchor_loads(tmp_path: Path) -> None:
+    """`<<: *base` is a merge key, not a duplicate: the base constructor flattens it."""
+
+    path = tmp_path / "quality-anchor.yaml"
+    path.write_text(
+        "base: &base\n"
+        "  version: '1'\n"
+        "  min_score: 80\n"
+        "policies:\n"
+        "  default:\n"
+        "    <<: *base\n"
+        "    required_tools: [pytest]\n",
+        encoding="utf-8",
+    )
+
+    policy_from_file = load_policy(path)
+
+    assert policy_from_file.min_score == 80.0
+    assert policy_from_file.required_tools == (CheckTool.pytest,)

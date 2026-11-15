@@ -146,6 +146,10 @@ class _StrictLoader(yaml.SafeLoader):
     def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[object, object]:
         seen: set[object] = set()
         for key_node, _ in node.value:
+            if key_node.tag == "tag:yaml.org,2002:merge":
+                # `<<: *base` is flattened by the base constructor, which this one calls at the
+                # end; constructing the tag here would fail, since it has no constructor.
+                continue
             key = self.construct_object(key_node, deep=deep)
             if key in seen:
                 raise yaml.constructor.ConstructorError(
