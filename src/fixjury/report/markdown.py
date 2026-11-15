@@ -170,8 +170,16 @@ def _judge(payload: Mapping[str, object]) -> Mapping[str, object] | None:
     return block if isinstance(block, dict) else None
 
 
-def render_judge_usage_table(payloads: Sequence[Mapping[str, object]]) -> list[str]:
-    """What judging cost, kept beside the agent's own totals instead of inside them."""
+def render_judge_usage_table(
+    payloads: Sequence[Mapping[str, object]], *, basis: str = "list_price"
+) -> list[str]:
+    """What judging cost, kept beside the agent's own totals instead of inside them.
+
+    The judge's money is a list-price reference whatever basis the agent's numbers use: the
+    snapshot prices judge tokens at the pinned rates and assigns no amortized share of the
+    subscription to them, so labelling that column with the agent's basis would claim a
+    measurement nobody made.
+    """
 
     section = [payload for payload in payloads if _judge(payload) is not None]
     if not section:
@@ -181,10 +189,13 @@ def render_judge_usage_table(payloads: Sequence[Mapping[str, object]]) -> list[s
         "## Judge usage",
         "",
         "Judging is a second bill: every evaluation pays for its own tokens, and a re-evaluation "
-        "adds to the total rather than replacing it.",
+        "adds to the total rather than replacing it. Judge cost is a **list price** reference — "
+        "the snapshot prices its tokens at the pinned rates and assigns no amortized share — "
+        f"while the agent's cost is {BASIS_LABELS.get(basis, basis)}.",
         "",
-        "| Agent | Evaluations | Escalated | Judge tokens | Judge cost | Judge pricing version "
-        "| Agent tokens | Agent cost | Agent pricing version |",
+        "| Agent | Evaluations | Escalated | Judge tokens | Judge cost (list price) "
+        "| Judge pricing version | Agent tokens | Agent cost (selected basis) "
+        "| Agent pricing version |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for payload in section:
@@ -232,7 +243,9 @@ def render_report(
     lines = [
         f"# {title}",
         "",
-        f"Cost basis in every table below: **{basis_label}**.",
+        f"Cost basis for the agent's cost: **{basis_label}**. The judge's cost is always a "
+        "list-price reference: it draws tokens from the same subscription, and no amortized "
+        "share is assigned to it.",
         "",
         "## Acceptance and success",
         "",
@@ -275,7 +288,7 @@ def render_report(
             f"| {payload.get('pricing_version', '?')} |"
         )
     lines += render_calibration_table(snapshots)
-    lines += render_judge_usage_table(snapshots)
+    lines += render_judge_usage_table(snapshots, basis=basis)
     lines += [
         "",
         "## How to read this",

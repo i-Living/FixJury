@@ -237,7 +237,8 @@ export default function Page() {
       <h2>Usage</h2>
       <p>
         Judging is a second bill: every evaluation pays for its own tokens, and a re-evaluation adds
-        to the total rather than replacing it. Costs carry the pricing version they were computed
+        to the total rather than replacing it. Judge cost is a list-price reference — the snapshot
+        assigns it no amortized share — and both costs carry the pricing version they were computed
         under, because two versions are not comparable.
       </p>
       <div className="scroll">
@@ -247,9 +248,9 @@ export default function Page() {
               <th>Agent</th>
               <th>Verdict source</th>
               <th className="num">Agent tokens</th>
-              <th className="num">Agent cost</th>
+              <th className="num">Agent cost (basis)</th>
               <th className="num">Judge tokens</th>
-              <th className="num">Judge cost</th>
+              <th className="num">Judge cost (list price)</th>
               <th>Pricing version (agent / judge)</th>
             </tr>
           </thead>

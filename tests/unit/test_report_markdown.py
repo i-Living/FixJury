@@ -148,3 +148,27 @@ def test_judge_usage_is_reported_beside_the_agent_totals() -> None:
     assert "## Judge usage" in text
     assert "| baseline | 2 | 1 | 2000 | 0.2500 | unpriced-2026-11 |" in text
     assert "5000" in text, "the agent's own tokens stay in their own column"
+
+
+def test_an_amortized_report_says_the_judge_cost_is_still_a_list_price() -> None:
+    """The two bases answer different questions; a table cannot lend its label to the other."""
+
+    payload: dict[str, object] = {
+        **PAYLOAD,
+        "cost_basis": "amortized",
+        "verdict_source": "judge",
+        "judge": {
+            "evaluations": 1,
+            "escalated": 0,
+            "tokens_total": 100,
+            "cost_total": "0.0100",
+            "pricing_versions": ["v"],
+        },
+    }
+
+    text = render_report([payload], basis="amortized")
+
+    assert "amortized" in text
+    assert "Judge cost (list price)" in text
+    assert "Agent cost (selected basis)" in text
+    assert "The judge's cost is always a list-price reference" in text
