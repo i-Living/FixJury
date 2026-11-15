@@ -165,6 +165,51 @@ def render_calibration_table(payloads: Sequence[Mapping[str, object]]) -> list[s
     return lines
 
 
+def _judge(payload: Mapping[str, object]) -> Mapping[str, object] | None:
+    block = payload.get("judge")
+    return block if isinstance(block, dict) else None
+
+
+def render_judge_usage_table(payloads: Sequence[Mapping[str, object]]) -> list[str]:
+    """What judging cost, kept beside the agent's own totals instead of inside them."""
+
+    section = [payload for payload in payloads if _judge(payload) is not None]
+    if not section:
+        return []
+    lines = [
+        "",
+        "## Judge usage",
+        "",
+        "Judging is a second bill: every evaluation pays for its own tokens, and a re-evaluation "
+        "adds to the total rather than replacing it.",
+        "",
+        "| Agent | Evaluations | Escalated | Judge tokens | Judge cost | Judge pricing version "
+        "| Agent tokens | Agent cost | Agent pricing version |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for payload in section:
+        block = _judge(payload) or {}
+        versions = block.get("pricing_versions")
+        judge_versions = (
+            ", ".join(str(item) for item in versions)
+            if isinstance(versions, list) and versions
+            else "unknown"
+        )
+        metrics = _metrics(payload)
+        lines.append(
+            f"| {payload.get('agent', '?')} "
+            f"| {_count(block.get('evaluations'))} "
+            f"| {_count(block.get('escalated'))} "
+            f"| {_count(block.get('tokens_total'))} "
+            f"| {_number(block.get('cost_total'))} "
+            f"| {judge_versions} "
+            f"| {_count(metrics.get('tokens_total'))} "
+            f"| {_number(metrics.get('cost_total'))} "
+            f"| {payload.get('pricing_version', 'unknown')} |"
+        )
+    return lines
+
+
 def _verdict_word(value: object) -> str:
     if value is True:
         return "yes"
@@ -230,6 +275,7 @@ def render_report(
             f"| {payload.get('pricing_version', '?')} |"
         )
     lines += render_calibration_table(snapshots)
+    lines += render_judge_usage_table(snapshots)
     lines += [
         "",
         "## How to read this",

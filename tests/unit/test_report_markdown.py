@@ -126,3 +126,25 @@ def test_decimal_values_are_formatted_not_printed_raw() -> None:
     payload["metrics"] = {**METRICS, "cost_per_accepted_fix": Decimal("0.4")}
 
     assert "0.40" in render_agent_table(payload)
+
+
+def test_judge_usage_is_reported_beside_the_agent_totals() -> None:
+    """A judge bill has to be visible, or "cost per accepted fix" hides half of what was spent."""
+
+    payload: dict[str, object] = {
+        **PAYLOAD,
+        "verdict_source": "judge",
+        "judge": {
+            "evaluations": 2,
+            "escalated": 1,
+            "tokens_total": 2000,
+            "cost_total": "0.2500",
+            "pricing_versions": ["unpriced-2026-11"],
+        },
+    }
+
+    text = render_report([payload])
+
+    assert "## Judge usage" in text
+    assert "| baseline | 2 | 1 | 2000 | 0.2500 | unpriced-2026-11 |" in text
+    assert "5000" in text, "the agent's own tokens stay in their own column"

@@ -446,3 +446,25 @@ def test_grouped_metrics_come_from_the_snapshot_not_the_reader() -> None:
 def test_grouping_outside_the_recorded_dimensions_is_refused() -> None:
     with pytest.raises(ValueError, match="unknown grouping"):
         group_attempts([], key="language")
+
+
+def test_an_inconclusive_judgement_is_evaluated_but_not_decided() -> None:
+    """A judge that could not decide did not reject the patch (SPEC §5)."""
+
+    report = compute_metrics(
+        [
+            attempt(
+                "T-1", judge_verdict="INCONCLUSIVE", judge_evaluations=1, declared_success=True
+            ),
+            attempt("T-2", judge_verdict="REJECTED", judge_evaluations=1),
+        ],
+        agent="baseline",
+        verdict_source=VerdictSource.judge,
+    )
+
+    assert report.pairs == 2
+    assert report.evaluated_pairs == 2
+    assert report.decided_pairs == 1
+    assert report.acceptance_rate == 0.0
+    # The undecided pair did not claim success either: only T-2 declared it.
+    assert report.false_completion_rate is None

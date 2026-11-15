@@ -56,6 +56,17 @@ PAYLOADS: list[dict[str, object]] = [
         },
         # 1 clean of 4 decided, 2 accepted: the shares the snapshot would store.
         "split": {"regression_free": 0.25, "with_regression": 0.25, "not_accepted": 0.5},
+        "judge": {
+            "evaluations": 4,
+            "verdicts": {"ACCEPTED": 2, "REJECTED": 1, "INCONCLUSIVE": 1},
+            "escalated": 1,
+            "tokens_total": 4000,
+            "cost_total": "0.2500",
+            "pricing_versions": ["fixture"],
+            "models": ["fixture-model"],
+            "prompt_versions": ["1"],
+            "judge_config_hashes": ["fixture-judge-config"],
+        },
         "calibration": {
             "reference": "held-out suite pass/fail",
             "labeled_pairs": 4,

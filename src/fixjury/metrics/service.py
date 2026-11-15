@@ -50,16 +50,40 @@ class MetricsError(RuntimeError):
 class Judgement:
     """The newest judge evaluation of one run, flattened to what the metrics read."""
 
+    #: The final verdict, after the critical-failure rules. Acceptance counts this one.
     verdict: str
+    #: The judge's own answer before those rules. Calibration scores this one.
+    assessment: str | None
     confidence: float
     verdicts: tuple[str, ...]
     escalated: bool
-    tokens_in: int
-    tokens_out: int
-    cost_list_usd: Decimal
     judge_config_hash: str
     models: tuple[str, ...]
     prompt_versions: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class JudgeUsage:
+    """What judging one run cost, across every finished evaluation of it.
+
+    Kept apart from ``Judgement`` because re-evaluation is allowed and every evaluation paid
+    for its own tokens: the newest one speaks for the verdict, but dropping the older ones
+    from the totals would under-report what the benchmark spent.
+    """
+
+    evaluations: int
+    tokens_in: int
+    tokens_out: int
+    cost_list_usd: Decimal
+    pricing_versions: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class JudgeLedger:
+    """The newest verdict per run plus the judging bill of every run."""
+
+    newest: dict[uuid.UUID, Judgement]
+    usage: dict[uuid.UUID, JudgeUsage]
 
 
 def _duration(run: Run) -> float | None:
@@ -72,13 +96,16 @@ def attempts_from_rows(
     rows: Sequence[tuple[Run, Verdict | None, Task | None]],
     *,
     judgements: Mapping[uuid.UUID, Judgement] | None = None,
+    usage: Mapping[uuid.UUID, JudgeUsage] | None = None,
 ) -> list[Attempt]:
     """Flatten the join into the plain rows the metric functions read."""
 
     judged = judgements or {}
+    spent = usage or {}
     attempts: list[Attempt] = []
     for run, verdict, task in rows:
         judgement = judged.get(run.id)
+        judge_usage = spent.get(run.id, JudgeUsage(0, 0, 0, Decimal("0"), ()))
         attempts.append(
             Attempt(
                 task_id=run.task_id,
@@ -103,15 +130,14 @@ def attempts_from_rows(
                     None if task is None or task.difficulty is None else task.difficulty.value
                 ),
                 judge_verdict=None if judgement is None else judgement.verdict,
+                judge_assessment=None if judgement is None else judgement.assessment,
                 judge_confidence=None if judgement is None else judgement.confidence,
                 judge_verdicts=() if judgement is None else judgement.verdicts,
                 judge_escalated=False if judgement is None else judgement.escalated,
                 judge_evaluations=0 if judgement is None else 1,
-                judge_tokens_in=0 if judgement is None else judgement.tokens_in,
-                judge_tokens_out=0 if judgement is None else judgement.tokens_out,
-                judge_cost_list_usd=(
-                    Decimal("0") if judgement is None else judgement.cost_list_usd
-                ),
+                judge_tokens_in=judge_usage.tokens_in,
+                judge_tokens_out=judge_usage.tokens_out,
+                judge_cost_list_usd=judge_usage.cost_list_usd,
             )
         )
     return attempts
@@ -135,29 +161,27 @@ def _judgement_of(run: EvaluationRun, result: EvaluationResult | None) -> Judgem
     )
     return Judgement(
         verdict="" if result is None else result.verdict.value,
+        assessment=None
+        if result is None or result.judge_verdict is None
+        else result.judge_verdict.value,
         confidence=0.0 if result is None else float(result.confidence),
         verdicts=tuple(str(item.get("verdict", "")) for item in assessments if item.get("verdict")),
         escalated=bool(result.escalated) if result is not None else False,
-        tokens_in=run.tokens_in,
-        tokens_out=run.tokens_out,
-        cost_list_usd=run.cost_list_usd,
         judge_config_hash=run.judge_config_hash or "",
         models=models,
         prompt_versions=versions,
     )
 
 
-async def judgements_for(
-    session: AsyncSession, run_ids: Sequence[uuid.UUID]
-) -> dict[uuid.UUID, Judgement]:
-    """The newest finished evaluation per run.
+async def judgements_for(session: AsyncSession, run_ids: Sequence[uuid.UUID]) -> JudgeLedger:
+    """The newest finished evaluation per run, plus what all of them cost.
 
-    A run judged twice is one pair judged twice; the newest evaluation speaks for the pair
-    and the older one stays in the database as its own audit trail.
+    A run judged twice is one pair judged twice: the newest evaluation speaks for the pair,
+    and the older one stays in the database as its own audit trail and its own spend.
     """
 
     if not run_ids:
-        return {}
+        return JudgeLedger(newest={}, usage={})
     rows = await session.execute(
         select(EvaluationRun, EvaluationResult)
         .outerjoin(EvaluationResult, EvaluationResult.evaluation_run_id == EvaluationRun.id)
@@ -168,35 +192,70 @@ async def judgements_for(
         .order_by(EvaluationRun.created_at.desc())
     )
     newest: dict[uuid.UUID, Judgement] = {}
+    per_run: dict[uuid.UUID, list[EvaluationRun]] = {}
     for evaluation, result in rows.all():
-        if evaluation.run_id is None or evaluation.run_id in newest:
+        run_id = evaluation.run_id
+        if run_id is None:
             continue
-        newest[evaluation.run_id] = _judgement_of(evaluation, result)
-    return newest
+        per_run.setdefault(run_id, []).append(evaluation)
+        # The query is newest first, so the first evaluation seen is the one that speaks.
+        newest.setdefault(run_id, _judgement_of(evaluation, result))
+    return JudgeLedger(
+        newest=newest, usage={run_id: _usage_of(items) for run_id, items in per_run.items()}
+    )
 
 
-def judge_block(judgements: Mapping[uuid.UUID, Judgement]) -> dict[str, object]:
+def _usage_of(evaluations: Sequence[EvaluationRun]) -> JudgeUsage:
+    """Tokens, cost and pricing versions of one run's finished evaluations."""
+
+    return JudgeUsage(
+        evaluations=len(evaluations),
+        tokens_in=sum(item.tokens_in for item in evaluations),
+        tokens_out=sum(item.tokens_out for item in evaluations),
+        cost_list_usd=sum((item.cost_list_usd for item in evaluations), Decimal("0")),
+        pricing_versions=tuple(
+            sorted({item.pricing_version for item in evaluations if item.pricing_version})
+        ),
+    )
+
+
+def total_usage(usage: Mapping[uuid.UUID, JudgeUsage]) -> JudgeUsage:
+    """Every run's judging bill in one record."""
+
+    return JudgeUsage(
+        evaluations=sum(item.evaluations for item in usage.values()),
+        tokens_in=sum(item.tokens_in for item in usage.values()),
+        tokens_out=sum(item.tokens_out for item in usage.values()),
+        cost_list_usd=sum((item.cost_list_usd for item in usage.values()), Decimal("0")),
+        pricing_versions=tuple(
+            sorted({version for item in usage.values() for version in item.pricing_versions})
+        ),
+    )
+
+
+def judge_block(ledger: JudgeLedger) -> dict[str, object]:
     """What judging cost and which judges said what, kept apart from the agent's numbers."""
 
+    judgements = ledger.newest.values()
+    usage = total_usage(ledger.usage)
     counts: dict[str, int] = {}
-    for judgement in judgements.values():
+    for judgement in judgements:
         counts[judgement.verdict] = counts.get(judgement.verdict, 0) + 1
     return {
-        "evaluations": len(judgements),
+        "evaluations": usage.evaluations,
         "verdicts": counts,
-        "escalated": sum(1 for judgement in judgements.values() if judgement.escalated),
-        "tokens_total": sum(
-            judgement.tokens_in + judgement.tokens_out for judgement in judgements.values()
-        ),
-        "cost_total": str(
-            sum((judgement.cost_list_usd for judgement in judgements.values()), Decimal("0"))
-        ),
-        "models": sorted({model for item in judgements.values() for model in item.models}),
+        "escalated": sum(1 for judgement in judgements if judgement.escalated),
+        "tokens_total": usage.tokens_in + usage.tokens_out,
+        "cost_total": str(usage.cost_list_usd),
+        # Money carries the version it was priced under: costs from two versions are not
+        # comparable, and the judge's bill can come from a different one than the agent's.
+        "pricing_versions": list(usage.pricing_versions),
+        "models": sorted({model for item in judgements for model in item.models}),
         "prompt_versions": sorted(
-            {version for item in judgements.values() for version in item.prompt_versions}
+            {version for item in judgements for version in item.prompt_versions}
         ),
         "judge_config_hashes": sorted(
-            {item.judge_config_hash for item in judgements.values() if item.judge_config_hash}
+            {item.judge_config_hash for item in judgements if item.judge_config_hash}
         ),
     }
 
@@ -227,8 +286,8 @@ async def compute_snapshot(
     if not rows:
         raise MetricsError(f"no runs for agent {agent!r}")
 
-    judgements = await judgements_for(session, [run.id for run, _, _ in rows])
-    attempts = attempts_from_rows(rows, judgements=judgements)
+    ledger = await judgements_for(session, [run.id for run, _, _ in rows])
+    attempts = attempts_from_rows(rows, judgements=ledger.newest, usage=ledger.usage)
     report = compute_metrics(attempts, agent=agent, verdict_source=verdict_source)
     if verdict_source is VerdictSource.judge and report.evaluated_pairs == 0:
         # An all-null snapshot would read as "the judge accepted nothing"; the truth is that
@@ -250,8 +309,8 @@ async def compute_snapshot(
         cost_basis=cost_basis.value,
         pricing_version=",".join(pricing_versions) if pricing_versions else None,
     )
-    if judgements:
-        payload["judge"] = judge_block(judgements)
+    if ledger.newest:
+        payload["judge"] = judge_block(ledger)
         payload["calibration"] = as_calibration_payload(calibrate(attempts))
     payload["groups"] = grouped_payload(attempts, agent=agent, verdict_source=verdict_source)
     snapshot = MetricSnapshot(

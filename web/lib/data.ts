@@ -48,6 +48,17 @@ export type Split = {
 /** One calibration rate: the count, its denominator and the share. */
 export type Rate = { count: number; of: number; rate: number | null };
 
+/** What judging cost: a second bill, reported beside the agent's and never inside it. */
+export type Judge = {
+  evaluations: number;
+  escalated: number;
+  tokens_total: number | null;
+  cost_total: string | null;
+  pricing_versions: string[];
+  models: string[];
+  prompt_versions: string[];
+};
+
 /** What the judge did, measured against the held-out labels it did not produce. */
 export type Calibration = {
   reference: string;
@@ -70,6 +81,7 @@ export type AgentSnapshot = {
   exclusions: Record<string, number>;
   metrics: Metrics;
   split: Split;
+  judge?: Judge;
   calibration?: Calibration;
 };
 
@@ -112,6 +124,26 @@ function rateOf(value: unknown): Rate {
     count: numberOrNull(block.count) ?? 0,
     of: numberOrNull(block.of) ?? 0,
     rate: numberOrNull(block.rate),
+  };
+}
+
+function strings(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function judgeOf(value: unknown): Judge | undefined {
+  if (typeof value !== "object" || value === null) {
+    return undefined;
+  }
+  const block = record(value);
+  return {
+    evaluations: numberOrNull(block.evaluations) ?? 0,
+    escalated: numberOrNull(block.escalated) ?? 0,
+    tokens_total: numberOrNull(block.tokens_total),
+    cost_total: stringOrNull(block.cost_total),
+    pricing_versions: strings(block.pricing_versions),
+    models: strings(block.models),
+    prompt_versions: strings(block.prompt_versions),
   };
 }
 
@@ -183,6 +215,7 @@ function normalize(raw: unknown): AgentSnapshot {
       with_regression: numberOrNull(split.with_regression),
       not_accepted: numberOrNull(split.not_accepted),
     },
+    judge: judgeOf(payload.judge),
     calibration: calibrationOf(payload.calibration),
   };
 }

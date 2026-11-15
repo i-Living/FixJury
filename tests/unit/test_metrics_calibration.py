@@ -27,14 +27,20 @@ def judged(
     task_id: str,
     *,
     verdict: str | None = "ACCEPTED",
+    assessment: str | None = None,
     heldout: bool | None = True,
     confidence: float | None = 0.8,
     votes: tuple[str, ...] = (),
     escalated: bool = False,
     status: str = "finished",
 ) -> Attempt:
-    """One judged attempt: the judge's verdict, its votes and the label it is scored against."""
+    """One judged attempt: the judge's verdict, its votes and the label it is scored against.
 
+    ``verdict`` is the final one the engine stored; ``assessment`` is what the judge said
+    before the critical-failure rules could override it, and calibration scores that.
+    """
+
+    said = verdict if assessment is None else assessment
     return Attempt(
         task_id=task_id,
         agent="baseline",
@@ -43,8 +49,9 @@ def judged(
         heldout_pass=heldout,
         policy_pass=True,
         judge_verdict=verdict,
+        judge_assessment=said,
         judge_confidence=confidence,
-        judge_verdicts=votes or ((verdict,) if verdict else ()),
+        judge_verdicts=votes or ((said,) if said else ()),
         judge_escalated=escalated,
         judge_evaluations=1 if verdict else 0,
     )
@@ -220,3 +227,33 @@ def test_the_payload_carries_counts_and_denominators_never_bare_rates() -> None:
     assert false_accept == {"count": 1, "of": 1, "rate": 1.0}
     assert payload["meets_thresholds"] is False
     assert isinstance(payload["bins"], list)
+
+
+def test_a_final_rejection_does_not_hide_a_judge_that_accepted() -> None:
+    """The held-out suite overrides the verdict; it must not launder the judge's mistake.
+
+    A patch the judge accepted and the held-out suite failed is stored as ``REJECTED``,
+    because a failed held-out suite is a critical finding. Scoring calibration on that final
+    verdict would count the judge as correct about exactly the case it got wrong.
+    """
+
+    run = judged(
+        "T-1",
+        verdict="REJECTED",
+        assessment="ACCEPTED",
+        heldout=False,
+    )
+
+    assert false_acceptance([run]).count == 1
+    assert false_acceptance([run]).of == 1
+
+
+def test_a_judge_that_could_not_decide_is_not_a_rejection() -> None:
+    run = judged("T-1", verdict="INCONCLUSIVE", assessment="INCONCLUSIVE", heldout=True)
+
+    assert false_rejection([run]).count == 0
+    # No decision is no comparison: the pair is neither a hit nor a miss, and it is reported
+    # as inconclusive instead of being counted in an error rate it cannot have.
+    assert false_rejection([run]).of == 0
+    assert calibrate([run]).labeled_pairs == 0
+    assert calibrate([run]).inconclusive_pairs == 1

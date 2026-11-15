@@ -55,6 +55,10 @@ class Attempt:
     # The newest judge evaluation of this run, as the metrics need it. ``judge_verdicts``
     # keeps one entry per assessment so agreement can be measured without a second query.
     judge_verdict: str | None = None
+    #: What the judge itself said, before the critical-failure rules could override it.
+    #: Calibration scores this one: a held-out failure the engine turns into REJECTED must
+    #: not erase a judge that called the patch correct.
+    judge_assessment: str | None = None
     judge_confidence: float | None = None
     judge_verdicts: tuple[str, ...] = ()
     judge_escalated: bool = False
@@ -181,6 +185,22 @@ def _pairs(attempts: Sequence[Attempt]) -> dict[str, list[Attempt]]:
     return grouped
 
 
+#: The stored spelling of acceptance in each vocabulary: the reviewer's is lower case, the
+#: judge's is upper case because SPEC §4.5 spells the verdicts that way.
+ACCEPTED_VERDICT: dict[VerdictSource, str] = {
+    VerdictSource.human: "accept",
+    VerdictSource.judge: "ACCEPTED",
+}
+
+#: What counts as a decision. ``INCONCLUSIVE`` is deliberately absent: a judge that could not
+#: decide did not reject the patch, and counting it as "not accepted" would turn a gap in the
+#: evidence into a failure rate (SPEC §5).
+DECIDED_VERDICTS: dict[VerdictSource, frozenset[str]] = {
+    VerdictSource.human: frozenset({"accept", "reject"}),
+    VerdictSource.judge: frozenset({"ACCEPTED", "REJECTED"}),
+}
+
+
 def _verdict(run: Attempt, source: VerdictSource) -> str | None:
     """The verdict this source reads from one attempt, as stored."""
 
@@ -188,15 +208,14 @@ def _verdict(run: Attempt, source: VerdictSource) -> str | None:
 
 
 def _is_accepted(runs: Sequence[Attempt], source: VerdictSource) -> bool:
-    return any(
-        _verdict(run, source) == "ACCEPTED" or _verdict(run, source) == "accept" for run in runs
-    )
+    accepted = ACCEPTED_VERDICT[source]
+    return any(_verdict(run, source) == accepted for run in runs)
 
 
 def _is_regression_free(runs: Sequence[Attempt], source: VerdictSource) -> bool:
-    acceptance = "ACCEPTED" if source is VerdictSource.judge else "accept"
+    accepted = ACCEPTED_VERDICT[source]
     return any(
-        _verdict(run, source) == acceptance and run.heldout_pass is True and run.policy_pass is True
+        _verdict(run, source) == accepted and run.heldout_pass is True and run.policy_pass is True
         for run in runs
     )
 
@@ -243,12 +262,13 @@ def compute_metrics(
     pairs = len(finished_pairs)
     # Acceptance is a statement about pairs a verdict exists for. Counting an undecided
     # pair as "not accepted" would report the evaluation backlog as a failure rate.
+    decided = DECIDED_VERDICTS[verdict_source]
     decided_pairs = {
         task_id: runs
         for task_id, runs in finished_pairs.items()
-        if any(_verdict(run, verdict_source) is not None for run in runs)
+        if any(_verdict(run, verdict_source) in decided for run in runs)
     }
-    decided = len(decided_pairs)
+    decided_count = len(decided_pairs)
     human_labeled = sum(
         1 for runs in finished_pairs.values() if any(run.human_verdict is not None for run in runs)
     )
@@ -265,7 +285,7 @@ def compute_metrics(
     automated = sum(1 for runs in finished_pairs.values() if _is_automated_pass(runs))
     # A pair whose patch was never tested cannot be called regression-free either way;
     # PLAN §3.2 excludes it from this rate and publishes the count as a data defect.
-    regression_denominator = decided - sum(
+    regression_denominator = decided_count - sum(
         1 for runs in decided_pairs.values() if _heldout_is_missing(runs)
     )
 
@@ -304,11 +324,11 @@ def compute_metrics(
         judge_tokens_total=judge_tokens_total,
         cost_total=cost_total,
         judge_cost_total=judge_cost_total,
-        decided_pairs=decided,
+        decided_pairs=decided_count,
         human_labeled_pairs=human_labeled,
         evaluated_pairs=evaluated,
-        acceptance_rate=accepted_pairs / decided if decided else None,
-        acceptance_ci=wilson_interval(accepted_pairs, decided) if decided else None,
+        acceptance_rate=accepted_pairs / decided_count if decided_count else None,
+        acceptance_ci=wilson_interval(accepted_pairs, decided_count) if decided_count else None,
         regression_free_acceptance_rate=(
             regression_free / regression_denominator if regression_denominator else None
         ),
@@ -342,7 +362,7 @@ def compute_metrics(
         missing_heldout_pairs=sum(
             1 for runs in finished_pairs.values() if _heldout_is_missing(runs)
         ),
-        split=corpus_split(decided, accepted_pairs, regression_free),
+        split=corpus_split(decided_count, accepted_pairs, regression_free),
         exclusions=exclusions,
     )
 

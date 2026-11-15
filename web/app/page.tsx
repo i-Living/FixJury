@@ -234,6 +234,59 @@ export default function Page() {
         </table>
       </div>
 
+      <h2>Usage</h2>
+      <p>
+        Judging is a second bill: every evaluation pays for its own tokens, and a re-evaluation adds
+        to the total rather than replacing it. Costs carry the pricing version they were computed
+        under, because two versions are not comparable.
+      </p>
+      <div className="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Agent</th>
+              <th>Verdict source</th>
+              <th className="num">Agent tokens</th>
+              <th className="num">Agent cost</th>
+              <th className="num">Judge tokens</th>
+              <th className="num">Judge cost</th>
+              <th>Pricing version (agent / judge)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {agents.map((agent) => (
+              <tr key={agent.agent}>
+                <td className="agent">{agent.agent}</td>
+                <td>
+                  <code>{agent.verdict_source}</code>
+                </td>
+                <td className="num">
+                  <Cell text={count(agent.metrics.tokens_total)} />
+                </td>
+                <td className="num">
+                  <Cell text={amount(agent.metrics.cost_total, 4)} />
+                </td>
+                <td className="num">
+                  <Cell text={agent.judge === undefined ? "not judged" : count(agent.judge.tokens_total)} />
+                </td>
+                <td className="num">
+                  <Cell text={agent.judge === undefined ? "not judged" : amount(agent.judge.cost_total, 4)} />
+                </td>
+                <td>
+                  <code>{agent.pricing_version ?? "unknown"}</code>
+                  {" / "}
+                  <code>
+                    {agent.judge === undefined || agent.judge.pricing_versions.length === 0
+                      ? "—"
+                      : agent.judge.pricing_versions.join(", ")}
+                  </code>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
       {agents.some((agent) => agent.calibration !== undefined) ? (
         <>
           <h2>Judge calibration</h2>

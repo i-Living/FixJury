@@ -24,6 +24,9 @@ from fixjury.metrics.compute import Attempt
 #: guess whether "known incorrect" meant a failing test or a reviewer's opinion.
 REFERENCE_LABEL = "held-out suite pass/fail"
 
+#: Slack for a comparison that is exact in decimal and not in binary floating point.
+TOLERANCE = 1e-9
+
 
 @dataclass(frozen=True)
 class CalibrationThresholds:
@@ -101,11 +104,14 @@ class CalibrationReport:
             if rate is None:
                 continue
             # Agreement is the inverse of disagreement: it must clear 1 - the line.
+            # `1.0 - 0.7` is 0.30000000000000004 in binary floating point, so a rate exactly at
+            # the line has to compare with a tolerance or a legal value reads as a breach.
             if name == "judge disagreement":
-                if 1.0 - rate > limit:
-                    checked.append(f"{name} {(1.0 - rate) * 100:.1f}% above {limit * 100:.0f}%")
+                disagreement = 1.0 - rate
+                if disagreement > limit + TOLERANCE:
+                    checked.append(f"{name} {disagreement * 100:.1f}% above {limit * 100:.0f}%")
                 continue
-            if rate > limit:
+            if rate > limit + TOLERANCE:
                 checked.append(f"{name} {rate * 100:.1f}% above {limit * 100:.0f}%")
         return tuple(checked)
 
@@ -120,13 +126,26 @@ def _reference_correct(run: Attempt) -> bool | None:
     return run.heldout_pass
 
 
+def _judge_verdict(run: Attempt) -> str | None:
+    """What the judge said, not what the critical-failure rules made of it.
+
+    ``Attempt.judge_verdict`` is the final verdict: a failed held-out suite becomes a
+    critical finding and the engine stores ``REJECTED`` whatever the judge thought. Scored
+    against that, a judge that accepted a patch the held-out suite then failed would look
+    like a correct rejection, and the false acceptance rate would understate exactly the
+    mistake it exists to count.
+    """
+
+    return run.judge_assessment
+
+
 def _labelled(attempts: Sequence[Attempt]) -> list[Attempt]:
     """Attempts a judge ruled on and a held-out suite answered."""
 
     return [
         run
         for run in attempts
-        if run.judge_verdict in {"ACCEPTED", "REJECTED"} and _reference_correct(run) is not None
+        if _judge_verdict(run) in {"ACCEPTED", "REJECTED"} and _reference_correct(run) is not None
     ]
 
 
@@ -139,7 +158,7 @@ def false_acceptance(attempts: Sequence[Attempt]) -> Rate:
 
     labelled = _labelled(attempts)
     wrong = [run for run in labelled if _reference_correct(run) is False]
-    return Rate(count=sum(1 for run in wrong if run.judge_verdict == "ACCEPTED"), of=len(wrong))
+    return Rate(count=sum(1 for run in wrong if _judge_verdict(run) == "ACCEPTED"), of=len(wrong))
 
 
 def false_rejection(attempts: Sequence[Attempt]) -> Rate:
@@ -151,7 +170,7 @@ def false_rejection(attempts: Sequence[Attempt]) -> Rate:
 
     labelled = _labelled(attempts)
     right = [run for run in labelled if _reference_correct(run) is True]
-    return Rate(count=sum(1 for run in right if run.judge_verdict == "REJECTED"), of=len(right))
+    return Rate(count=sum(1 for run in right if _judge_verdict(run) == "REJECTED"), of=len(right))
 
 
 def inconclusive_rate(attempts: Sequence[Attempt]) -> Rate:
@@ -199,7 +218,7 @@ def _confidence(run: Attempt) -> float | None:
 def _was_right(run: Attempt) -> bool:
     """False when judging a patch correct was wrong about the held-out outcome."""
 
-    return (run.judge_verdict == "ACCEPTED") == _reference_correct(run)
+    return (_judge_verdict(run) == "ACCEPTED") == _reference_correct(run)
 
 
 def _brier(attempts: Sequence[Attempt]) -> float | None:

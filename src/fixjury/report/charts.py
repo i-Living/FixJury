@@ -146,7 +146,12 @@ def _bar_chart(
 def render_charts(payloads: Sequence[Mapping[str, object]], out_dir: Path) -> dict[str, Path]:
     """Write the three charts and return their paths by name."""
 
-    labels = [str(payload.get("agent", "?")) for payload in payloads]
+    # The verdict source is part of the identity of a series: a human series and a judge
+    # series are two measurements, and a bare agent name would draw them as the same one.
+    labels = [
+        f"{payload.get('agent', '?')} ({payload.get('verdict_source', 'human')})"
+        for payload in payloads
+    ]
     acceptance = [
         _rate(payload, "acceptance_rate", legacy="human_acceptance_rate") for payload in payloads
     ]
@@ -220,7 +225,10 @@ def corpus_split(payload: Mapping[str, object]) -> dict[str, float | None]:
 def render_regression_split(payloads: Sequence[Mapping[str, object]], out_dir: Path) -> Path:
     """Stacked bars: accepted and regression-free, accepted but not, not accepted."""
 
-    labels = [str(payload.get("agent", "?")) for payload in payloads]
+    labels = [
+        f"{payload.get('agent', '?')} ({payload.get('verdict_source', 'human')})"
+        for payload in payloads
+    ]
     splits = [corpus_split(payload) for payload in payloads]
     # A snapshot without a reviewed pair has no split to draw; its bar is a gap.
     measured = [split for split in splits if None not in split.values()]
