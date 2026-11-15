@@ -11,6 +11,7 @@ import uuid
 from decimal import Decimal
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fixjury.evaluation.contracts import EvaluationConfiguration, digest
@@ -38,7 +39,12 @@ def configuration_hash(*, setup: JudgeSetup, config: EvaluationConfiguration) ->
 async def store_configuration(
     session: AsyncSession, *, setup: JudgeSetup, config: EvaluationConfiguration
 ) -> JudgeConfiguration:
-    """The configuration row for this setup, created once per digest."""
+    """The configuration row for this setup, created once per digest.
+
+    The insert is conflict-safe: two evaluations that start together under the same policy
+    race on the unique digest, and the loser reads the winner's row instead of failing the
+    whole evaluation.
+    """
 
     config_hash = configuration_hash(setup=setup, config=config)
     existing = await session.scalar(
@@ -46,16 +52,25 @@ async def store_configuration(
     )
     if existing is not None:
         return existing
-    row = JudgeConfiguration(
-        mode=config.mode.value,
-        provider=setup.provider.name,
-        primary_model=setup.primary_model,
-        escalation_model=setup.escalation_model or None,
-        config=config.model_dump(mode="json"),
-        config_hash=config_hash,
+    await session.execute(
+        pg_insert(JudgeConfiguration)
+        .values(
+            id=uuid.uuid4(),
+            mode=config.mode.value,
+            provider=setup.provider.name,
+            primary_model=setup.primary_model,
+            escalation_model=setup.escalation_model or None,
+            config=config.model_dump(mode="json"),
+            config_hash=config_hash,
+        )
+        .on_conflict_do_nothing(index_elements=["config_hash"])
     )
-    session.add(row)
     await session.flush()
+    row = await session.scalar(
+        select(JudgeConfiguration).where(JudgeConfiguration.config_hash == config_hash)
+    )
+    if row is None:
+        raise JudgeStoreError(f"judge configuration {config_hash} could not be stored")
     return row
 
 
@@ -80,7 +95,7 @@ async def store_judge_run(
                 model=assessment.model,
                 prompt_version=assessment.prompt_version,
                 verdict=assessment.response.verdict,
-                overall_score=Decimal(str(assessment.overall)),
+                overall_score=Decimal(str(assessment.self_reported_score)),
                 confidence=Decimal(str(assessment.response.confidence)),
                 escalated=assessment.escalated,
                 raw={

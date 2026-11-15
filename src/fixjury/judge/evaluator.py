@@ -51,7 +51,7 @@ class Assessment:
             model=self.model,
             prompt_version=self.prompt_version,
             verdict=self.response.verdict,
-            overall=self.overall,
+            overall=self.self_reported_score,
             confidence=self.response.confidence,
             tokens_in=self.tokens_in,
             tokens_out=self.tokens_out,
@@ -61,11 +61,12 @@ class Assessment:
         )
 
     @property
-    def overall(self) -> float:
-        """The judge's own weighted average, for the record only.
+    def self_reported_score(self) -> float:
+        """The judge's own weighted average of its criterion scores.
 
-        The stored score is computed by :mod:`fixjury.evaluation.scoring` from the checks
-        and these criterion scores; this number never becomes a verdict on its own.
+        Recorded per assessment so a calibration run can compare what the judge claimed
+        with what the engine scored; it never becomes the stored score, which
+        :mod:`fixjury.evaluation.scoring` computes from the checks and these criteria.
         """
 
         scores = {item.criterion: item.score for item in self.response.criteria}

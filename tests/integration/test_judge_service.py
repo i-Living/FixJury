@@ -214,7 +214,7 @@ def test_a_single_judge_evaluation_is_stored_with_its_assessment() -> None:
     assert result.verdict is EvaluationVerdict.ACCEPTED
     assert result.judge_verdict is EvaluationVerdict.ACCEPTED
     assert result.score.overall == 88.0
-    assert INDEPENDENCE_NOTE in result.limitations
+    assert any(note.startswith(INDEPENDENCE_NOTE) for note in result.limitations)
     assert evaluation.judge_config_hash is not None
     assert assessments == 1
     assert escalations == 0

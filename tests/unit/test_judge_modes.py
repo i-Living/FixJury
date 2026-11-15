@@ -16,7 +16,7 @@ from fixjury.evaluation.contracts import (
     JudgeMode,
 )
 from fixjury.judge.escalation import should_escalate, triggers_for
-from fixjury.judge.evaluator import Assessment, assess
+from fixjury.judge.evaluator import Assessment, JudgeError, assess
 from fixjury.judge.modes import JudgeSetup, run
 from fixjury.judge.prompts import EVALUATE_PROMPT, load_prompt
 from fixjury.judge.provider import ProviderResponse
@@ -164,6 +164,36 @@ async def test_the_judge_budget_stops_the_escalation() -> None:
     assert len(result.assessments) == 1
     assert result.escalations[0].escalate is False
     assert "judge budget" in result.escalations[0].reason
+    # The judge wanted a second opinion and could not have one: an acceptance on a
+    # question the judge itself asked again is not an acceptance.
+    assert result.aggregation.verdict is EvaluationVerdict.INCONCLUSIVE
+
+
+@pytest.mark.asyncio
+async def test_a_zero_token_budget_makes_no_model_call_in_any_mode() -> None:
+    for mode in (JudgeMode.single, JudgeMode.adaptive, JudgeMode.multi):
+        provider = FakeProvider([reply(), reply()])
+        config = EvaluationConfiguration(mode=mode, token_budget=0)
+
+        with pytest.raises(JudgeError, match="token budget is zero"):
+            await run(
+                setup(provider, escalation_model="second-model"),
+                context=context(),
+                config=config,
+            )
+
+        assert provider.models == [], f"mode {mode.value} called the provider on a zero budget"
+
+
+@pytest.mark.asyncio
+async def test_multi_mode_with_too_few_selected_judges_is_refused() -> None:
+    provider = FakeProvider([reply()])
+    config = EvaluationConfiguration(mode=JudgeMode.multi, max_judges=1)
+
+    with pytest.raises(ValueError, match="at least two judges"):
+        await run(
+            setup(provider, escalation_model="second-model"), context=context(), config=config
+        )
 
 
 @pytest.mark.asyncio
@@ -207,7 +237,7 @@ async def test_multi_mode_without_a_second_model_is_refused() -> None:
     provider = FakeProvider([reply()])
     config = EvaluationConfiguration(mode=JudgeMode.multi)
 
-    with pytest.raises(ValueError, match="second judge model"):
+    with pytest.raises(ValueError, match="at least two judges"):
         await run(setup(provider), context=context(), config=config)
 
 

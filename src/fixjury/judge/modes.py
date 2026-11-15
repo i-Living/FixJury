@@ -12,15 +12,16 @@ tell a first opinion from a second.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from fixjury.evaluation.contracts import EvaluationConfiguration, EvaluationContext
 from fixjury.judge.aggregate import Aggregation, aggregate
 from fixjury.judge.escalation import Escalation, should_escalate
-from fixjury.judge.evaluator import Assessment, assess
+from fixjury.judge.evaluator import Assessment, JudgeError, assess
 from fixjury.judge.prompts import ESCALATE_PROMPT, EVALUATE_PROMPT, Prompt, load_prompt
 from fixjury.judge.provider import JudgeProvider
 from fixjury.metrics.cost import Pricing
+from fixjury.models import EvaluationVerdict
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,10 @@ async def run(
 ) -> JudgeRun:
     """Run the configured mode over one context."""
 
+    if config.token_budget <= 0:
+        # A zero budget is not "escalate cheaply", it is "no model call at all". Refusing
+        # here is the only reading that cannot end up storing a verdict nobody paid for.
+        raise JudgeError("the judge token budget is zero: no assessment can be requested")
     primary_prompt, escalation_prompt = _prompts()
     if config.mode.value == "single":
         return await _single(setup, context=context, config=config, prompt=primary_prompt)
@@ -149,10 +154,15 @@ async def _adaptive(
         assessments.append(second)
         tokens += second.tokens_in + second.tokens_out
 
+    aggregation = aggregate(tuple(assessments))
+    # A trigger that survived the last decision means a budget, not a clean run, stopped the
+    # escalation. An acceptance on a question the judge itself wanted re-asked is not one.
+    if escalations[-1].triggers and aggregation.verdict is EvaluationVerdict.ACCEPTED:
+        aggregation = replace(aggregation, verdict=EvaluationVerdict.INCONCLUSIVE)
     return JudgeRun(
         assessments=tuple(assessments),
         escalations=tuple(escalations),
-        aggregation=aggregate(tuple(assessments)),
+        aggregation=aggregation,
     )
 
 
@@ -165,12 +175,16 @@ async def _multi(
     escalation: Prompt,
 ) -> JudgeRun:
     models = setup.models()
-    if len(models) < 2:
-        # One configured model cannot be "multi": recording it as a disagreement-free
-        # multi run would claim an independence the platform does not have.
-        raise ValueError("multi mode needs a second judge model")
+    selected = models[: config.max_judges]
+    if len(selected) < 2:
+        # One judge cannot be "multi": recording it as a disagreement-free multi run would
+        # claim an independence the platform does not have.
+        raise ValueError(
+            f"multi mode needs at least two judges, {len(selected)} configured "
+            f"(max_judges={config.max_judges})"
+        )
     assessments: list[Assessment] = []
-    for position, model in enumerate(models[: config.max_judges]):
+    for position, model in enumerate(selected):
         assessments.append(
             await assess(
                 setup.provider,
