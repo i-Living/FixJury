@@ -180,4 +180,77 @@ def test_the_sdk_touches_no_database_and_no_global_settings() -> None:
 
     # `__future__` is a compiler directive, not a dependency.
     imported.discard("__future__")
-    assert imported == {"dataclasses", "decimal", "fixjury.agents.base"}
+    assert imported == {"asyncio", "dataclasses", "decimal", "fixjury.agents.base"}
+
+
+def test_a_second_execution_after_a_failure_is_refused() -> None:
+    """The adapter was invoked; another call would be a second run inside one session."""
+
+    session = prepare(FakeAdapter(explode=True), request())
+
+    with pytest.raises(RuntimeError, match="harness died"):
+        asyncio.run(execute(session))
+
+    with pytest.raises(SdkError, match="already executed"):
+        asyncio.run(execute(session))
+
+
+def test_terminate_cancels_an_execution_still_in_flight() -> None:
+    """SPEC §6.2 calls it terminate, not close: a running harness has to stop."""
+
+    class SlowAdapter(FakeAdapter):
+        def __init__(self) -> None:
+            super().__init__()
+            self.cancelled = False
+
+        async def run(self, request: RunRequest) -> AgentResult:
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
+            return self.answer
+
+    async def scenario() -> tuple[str, bool, bool]:
+        adapter = SlowAdapter()
+        session = prepare(adapter, request())
+        task = asyncio.ensure_future(execute(session))
+        await asyncio.sleep(0.01)
+        terminate(session)
+        try:
+            await task
+        except SdkError as exc:
+            message = str(exc)
+        else:  # pragma: no cover - the task must not succeed
+            raise AssertionError("a terminated execution must not return a result")
+        return message, adapter.cancelled, session.result is not None
+
+    message, cancelled, stored = asyncio.run(scenario())
+
+    assert "terminated" in message
+    assert cancelled, "the adapter sees the cancellation and can reap its container"
+    assert stored is False, "a result that arrived after termination is not kept"
+
+
+def test_two_overlapping_calls_run_the_agent_once() -> None:
+    class CountingAdapter(FakeAdapter):
+        def __init__(self) -> None:
+            super().__init__()
+            self.started = 0
+
+        async def run(self, request: RunRequest) -> AgentResult:
+            self.started += 1
+            await asyncio.sleep(0.01)
+            return self.answer
+
+    async def scenario() -> tuple[int, int]:
+        adapter = CountingAdapter()
+        session = prepare(adapter, request())
+        results = await asyncio.gather(execute(session), execute(session), return_exceptions=True)
+        refused = sum(1 for item in results if isinstance(item, SdkError))
+        return adapter.started, refused
+
+    started, refused = asyncio.run(scenario())
+
+    assert started == 1
+    assert refused == 1

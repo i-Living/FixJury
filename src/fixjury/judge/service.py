@@ -147,6 +147,20 @@ def independence_note() -> str:
     return INDEPENDENCE_NOTE + SHARED_SESSION_NOTE
 
 
+def _recorded_configuration() -> EvaluationConfiguration:
+    """The configuration to write on a failure row, even when the settings are invalid.
+
+    ``judge_configuration`` raises on a bad `FIXJURY_JUDGE_MODE`, and a recorder that called
+    it again would raise for the same reason — leaving a failed judgement unrecorded, which
+    is the state this table exists to prevent. The original error still reaches the row.
+    """
+
+    try:
+        return judge_configuration()
+    except JudgeServiceError:
+        return default_configuration()
+
+
 async def evaluate_run(
     session: AsyncSession,
     *,
@@ -168,25 +182,49 @@ async def evaluate_run(
     )
     run = await modes.run(resolved_setup, context=context, config=configuration)
     aggregation = run.aggregation
+    summaries = [assessment.summary() for assessment in run.assessments]
     if aggregation.verdict is None:
+        await store_failed_evaluation(
+            session,
+            run_id=request.run_id,
+            task_id=request.subject_ref,
+            subject_ref=request.subject_ref,
+            config=configuration,
+            error="the judge produced no assessment",
+            assessments=summaries,
+        )
         raise JudgeServiceError("the judge produced no assessment")
 
-    scoring_profile = profile or load_profile(
-        Path(settings.evaluation_config), name=configuration.profile
-    )
-    judged_hash = configuration_hash(setup=resolved_setup, config=configuration)
-    result = assemble_result(
-        request,
-        profile=scoring_profile,
-        judge_verdict=aggregation.verdict,
-        judge_scores=aggregation.judge_scores,
-        findings=aggregation.findings,
-        assessments=tuple(assessment.summary() for assessment in run.assessments),
-        confidence=aggregation.confidence,
-        limitations=(independence_note(),),
-        escalated=any(assessment.escalated for assessment in run.assessments),
-        reasoning_summary=_reasoning(run),
-    ).model_copy(update={"judge_config_hash": judged_hash})
+    try:
+        scoring_profile = profile or load_profile(
+            Path(settings.evaluation_config), name=configuration.profile
+        )
+        judged_hash = configuration_hash(setup=resolved_setup, config=configuration)
+        result = assemble_result(
+            request,
+            profile=scoring_profile,
+            judge_verdict=aggregation.verdict,
+            judge_scores=aggregation.judge_scores,
+            findings=aggregation.findings,
+            assessments=tuple(summaries),
+            confidence=aggregation.confidence,
+            limitations=(independence_note(),),
+            escalated=any(assessment.escalated for assessment in run.assessments),
+            reasoning_summary=_reasoning(run),
+        ).model_copy(update={"judge_config_hash": judged_hash})
+    except (ScoringError, ValueError) as exc:
+        # The judge answered and was paid for; the scoring step is what failed. Record the
+        # calls that happened so a failure row does not report a judgement as free.
+        await store_failed_evaluation(
+            session,
+            run_id=request.run_id,
+            task_id=request.subject_ref,
+            subject_ref=request.subject_ref,
+            config=configuration,
+            error=str(exc),
+            assessments=summaries,
+        )
+        raise
     stored = await store_evaluation(session, request=request, result=result)
     configuration_row = await store_configuration(
         session, setup=resolved_setup, config=configuration
@@ -222,7 +260,7 @@ async def record_failure(
         run_id=run_id,
         task_id=run.task_id,
         subject_ref=run.task_id,
-        config=config or judge_configuration(),
+        config=config or _recorded_configuration(),
         error=error,
     )
 

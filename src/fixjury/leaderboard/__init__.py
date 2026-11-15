@@ -64,6 +64,10 @@ class Leaderboard:
     corpus_version: str
     config_hashes: tuple[str, ...]
     verdict_source: str
+    #: Every ranked cost was priced under this one basis and version; a ranking refuses
+    #: mixed inputs, because AGENTS.md invariant 8 makes them incomparable.
+    cost_basis: str
+    pricing_version: str | None
     judge_config_hashes: tuple[str, ...]
     dimension: str
     entries: tuple[Entry, ...]
@@ -187,12 +191,32 @@ def build_leaderboard(
             "these snapshots were measured from different verdict sources "
             f"({', '.join(sources)}): a ranking needs one"
         )
+    # Money on two bases or under two pricing versions answers two questions. Ranking one
+    # cost column across them would compare a reference price with actual spend.
+    priced = sorted(
+        {
+            (str(payload.get("cost_basis") or "unknown"), str(payload.get("pricing_version") or ""))
+            for payload in payloads
+        }
+    )
+    if len(priced) > 1:
+        pairs = ", ".join(f"{basis}/{version or 'unknown'}" for basis, version in priced)
+        raise LeaderboardError(
+            "these snapshots were priced under different cost bases or pricing versions "
+            f"({pairs}): their costs are not comparable, so no ranking is published"
+        )
+    cost_basis, priced_version = priced[0]
+    pricing_version = priced_version or None
     config_hashes: set[str] = set()
     judge_hashes: set[str] = set()
     entries: list[Entry] = []
+    has_groups = False
     for payload in payloads:
         for entry in _entries_for(payload, dimension):
             entries.append(entry)
+        groups = payload.get("groups")
+        if isinstance(groups, Mapping) and dimension in groups:
+            has_groups = True
         config_hash = payload.get("config_hash")
         if isinstance(config_hash, str):
             config_hashes.add(config_hash)
@@ -220,6 +244,13 @@ def build_leaderboard(
         notes.append(
             f"Rows with fewer than {min_ranked_sample} decided pairs are listed without a rank."
         )
+    elif not has_groups:
+        # Older snapshots store no groups at all; an empty table with no reason reads as a
+        # measurement of nothing rather than as a missing input.
+        notes.append(
+            f"No snapshot records {dimension} groups, so this board lists no rows: recompute "
+            "the metrics to group them."
+        )
     if not judge_hashes:
         notes.append("No judge configuration is recorded in these snapshots.")
     notes.append(
@@ -230,6 +261,8 @@ def build_leaderboard(
         corpus_version=corpus_version,
         config_hashes=tuple(sorted(config_hashes)),
         verdict_source=sources[0],
+        cost_basis=cost_basis,
+        pricing_version=pricing_version,
         judge_config_hashes=tuple(sorted(judge_hashes)),
         dimension=dimension,
         entries=tuple(ranked),
@@ -275,6 +308,8 @@ def render_markdown(board: Leaderboard) -> str:
         "",
         f"- Corpus: **{board.corpus_version}** (frozen; task files are never edited in place).",
         f"- Verdict source: **{board.verdict_source}**.",
+        f"- Cost basis: **{board.cost_basis}**, pricing version "
+        f"**{board.pricing_version or 'unknown'}**.",
         f"- Run configuration hash: {config_hashes}.",
         f"- Judge configuration: {judge_hashes}.",
         f"- Ranked from at least **{board.min_ranked_sample}** decided pairs.",
@@ -317,6 +352,8 @@ def as_payload(board: Leaderboard) -> dict[str, object]:
     return {
         "corpus_version": board.corpus_version,
         "verdict_source": board.verdict_source,
+        "cost_basis": board.cost_basis,
+        "pricing_version": board.pricing_version,
         "config_hashes": list(board.config_hashes),
         "judge_config_hashes": list(board.judge_config_hashes),
         "dimension": board.dimension,

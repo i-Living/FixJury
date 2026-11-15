@@ -10,6 +10,7 @@ evaluation — so this never updates an existing result in place.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -156,6 +157,7 @@ async def store_failed_evaluation(
     subject_ref: str,
     config: EvaluationConfiguration,
     error: str,
+    assessments: Sequence[AssessmentSummary] = (),
     started_at: datetime | None = None,
 ) -> EvaluationRun:
     """Record an evaluation that could not produce a verdict, and why.
@@ -163,9 +165,16 @@ async def store_failed_evaluation(
     A judge failure is not a verdict about a patch: it is the absence of one. It is stored
     so a benchmark can count it, and it keeps the configuration it ran under so a retry is
     a new row rather than a rewrite.
+
+    ``assessments`` are the calls that already happened when a later step failed. Dropping
+    them would report a paid judgement as free, which is the one number a cost section must
+    never invent.
     """
 
     finished_at = datetime.now(UTC)
+    tokens_in = sum(item.tokens_in for item in assessments)
+    tokens_out = sum(item.tokens_out for item in assessments)
+    cost = sum((item.cost_list_usd for item in assessments), Decimal("0"))
     run = EvaluationRun(
         source=EvaluationSource.benchmark,
         subject_ref=subject_ref,
@@ -175,12 +184,12 @@ async def store_failed_evaluation(
         config_hash=config.config_hash(),
         scoring_profile=config.profile,
         scoring_version=UNSCORED,
-        assessments=[],
+        assessments=[item.model_dump(mode="json") for item in assessments],
         judge_config_hash=None,
         status=EvaluationStatus.failed,
-        tokens_in=0,
-        tokens_out=0,
-        cost_list_usd=Decimal("0"),
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        cost_list_usd=cost,
         pricing_version=settings.pricing_version,
         started_at=started_at,
         finished_at=finished_at,

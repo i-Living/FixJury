@@ -160,6 +160,18 @@ def test_the_difficulty_dimension_ranks_each_group_on_its_own() -> None:
     assert [entry.agent for entry in groups["hard"] if entry.ranked] == ["mini", "baseline"]
 
 
+def test_the_board_names_the_cost_basis_it_compared() -> None:
+    board = build_leaderboard([payload("baseline")], corpus_version="corpus-1")
+    text = render_markdown(board)
+
+    assert board.cost_basis == "list_price"
+    assert board.pricing_version == "v"
+    assert "Cost basis: **list_price**" in text
+    described = as_payload(board)
+    assert described["cost_basis"] == "list_price"
+    assert described["pricing_version"] == "v"
+
+
 def test_the_board_names_the_revision_and_the_configuration_it_ranked() -> None:
     board = build_leaderboard(
         [payload("baseline", config_hash="c" * 64)],
@@ -218,3 +230,33 @@ def test_the_json_payload_carries_the_same_numbers() -> None:
     assert isinstance(entries, list) and entries
     assert entries[0]["agent"] == "baseline"
     assert entries[0]["decided_pairs"] == 10
+
+
+def test_two_cost_bases_are_not_ranked_together() -> None:
+    """List price and amortized spend answer different questions; one column cannot hold both."""
+
+    amortized = {**payload("mini"), "cost_basis": "amortized"}
+
+    with pytest.raises(LeaderboardError, match="different cost bases"):
+        build_leaderboard([payload("baseline"), amortized], corpus_version="corpus-1")
+
+
+def test_two_pricing_versions_are_not_ranked_together() -> None:
+    older = {**payload("mini"), "pricing_version": "2025-01"}
+
+    with pytest.raises(LeaderboardError, match="pricing versions"):
+        build_leaderboard([payload("baseline"), older], corpus_version="corpus-1")
+
+
+def test_a_legacy_snapshot_without_groups_says_why_the_board_is_empty() -> None:
+    legacy = {
+        "agent": "old",
+        "cost_basis": "list_price",
+        "denominators": {"pairs": 10, "reviewed_pairs": 10, "accepted": 1},
+        "metrics": {"human_acceptance_rate": 0.1, "regression_free_acceptance_rate": 0.1},
+    }
+
+    board = build_leaderboard([legacy], corpus_version="corpus-1", dimension="difficulty")
+
+    assert board.entries == ()
+    assert any("no rows" in note for note in board.notes)

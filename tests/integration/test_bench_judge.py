@@ -272,3 +272,29 @@ def test_the_task_row_survives_a_failed_evaluation() -> None:
             return task.id
 
     assert asyncio.run(scenario()) == "T-001"
+
+
+def test_an_invalid_judge_setting_is_still_recorded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An invalid configuration is exactly when the failure row matters most."""
+
+    require_postgres()
+    monkeypatch.setattr(settings, "judge_mode", "nonsense")
+
+    async def scenario() -> tuple[JudgeStep, int]:
+        async with rolled_back_session() as session:
+            run = await add_run(session)
+            step = await judge_verified_run(session, run=run, corpus_root=CORPUS)
+            await session.flush()
+            rows = list(
+                (await session.execute(select(EvaluationRun).where(EvaluationRun.run_id == run.id)))
+                .scalars()
+                .all()
+            )
+            assert rows[0].error is not None
+            assert "configuration" in rows[0].error
+            return step, len(rows)
+
+    step, rows = asyncio.run(scenario())
+
+    assert step.judged is False
+    assert rows == 1, "the failure is stored even though the configuration could not validate"

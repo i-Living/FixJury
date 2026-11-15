@@ -328,3 +328,42 @@ def test_a_failed_check_rejects_even_a_unanimous_acceptance() -> None:
     assert result.verdict is EvaluationVerdict.REJECTED
     assert result.judge_verdict is EvaluationVerdict.ACCEPTED
     assert any(finding.confirmed for finding in result.findings)
+
+
+def test_a_scoring_failure_keeps_the_usage_of_the_calls_that_ran() -> None:
+    """A failed judgement still cost tokens, and the failure row has to say so."""
+
+    require_postgres()
+
+    async def scenario() -> tuple[str, int, int, Decimal, list[dict[str, object]]]:
+        async with rolled_back_session() as session:
+            run = await add_verified_run(session)
+            with pytest.raises(Exception) as failure:
+                await evaluate_run(
+                    session,
+                    run_id=run.id,
+                    corpus_root=CORPUS,
+                    # A profile that does not exist fails after the judge has already answered.
+                    config=EvaluationConfiguration(profile="no-such-profile"),
+                    setup=setup(FakeProvider([reply()])),
+                )
+            row = (
+                await session.execute(select(EvaluationRun).where(EvaluationRun.run_id == run.id))
+            ).scalar_one()
+            return (
+                str(failure.value),
+                row.tokens_in,
+                row.tokens_out,
+                row.cost_list_usd,
+                list(row.assessments),
+            )
+
+    message, tokens_in, tokens_out, cost, assessments = asyncio.run(scenario())
+
+    assert "profile" in message
+    assert (tokens_in, tokens_out) == (800, 200)
+    assert len(assessments) == 1, "the assessment that ran is kept, not dropped"
+    # The row's money is the sum of the assessments it kept. `strong-model` has no list
+    # price in the pinned table, so the number can be zero — but it is the same zero the
+    # assessment reported, not a total invented at the store.
+    assert Decimal(str(assessments[0]["cost_list_usd"])) == cost

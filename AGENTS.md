@@ -87,7 +87,8 @@ src/fixjury/telemetry.py   OTel spans; the trace id is stored on every run
 src/fixjury/tasks/         task.yaml schema, loader, freeze and validate
 src/fixjury/spec/          RepairSpec generation and rendering
 src/fixjury/agents/        AgentAdapter protocol + baseline + mini + openhands + container harness,
-                           sdk.py (the five-operation contract a new integration implements)
+                           sdk.py (the five operations a runner drives; an integration still
+                           implements AgentAdapter: name, version, run())
 src/fixjury/sandbox/       container lifecycle, per-run network, tool API, diff capture, egress proxy
 src/fixjury/verify/        check runner, held-out tests, policy, verdict assembly
 src/fixjury/review/        blind batching, rubric, review page (app.py + templates/)
