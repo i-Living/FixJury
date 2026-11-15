@@ -26,14 +26,26 @@ from fixjury.evaluation.contracts import (
     EvaluationContext,
     EvaluationResult,
 )
-from fixjury.evaluation.scoring import ScoringProfile, assemble_result, load_profile
-from fixjury.evaluation.service import build_request, default_configuration
-from fixjury.evaluation.store import store_evaluation
+from fixjury.evaluation.scoring import (
+    ScoringError,
+    ScoringProfile,
+    assemble_result,
+    load_profile,
+)
+from fixjury.evaluation.service import (
+    EvaluationError,
+    build_request,
+    default_configuration,
+)
+from fixjury.evaluation.store import store_evaluation, store_failed_evaluation
 from fixjury.judge import modes
-from fixjury.judge.evaluator import Assessment
+from fixjury.judge.evaluator import Assessment, JudgeError
+from fixjury.judge.prompts import PromptError
 from fixjury.judge.provider import ChatCompletionsProvider
+from fixjury.judge.schema import JudgeResponseError
 from fixjury.judge.store import configuration_hash, store_configuration, store_judge_run
-from fixjury.models import EvaluationRun
+from fixjury.llm import LlmError
+from fixjury.models import EvaluationRun, Run
 from fixjury.verify.policy import parse_changed_files
 
 #: Stored with every judged result. The owner approved model separation, not provider
@@ -188,6 +200,33 @@ async def evaluate_run(
     return JudgedEvaluation(evaluation=stored, result=result, assessments=run.assessments)
 
 
+async def record_failure(
+    session: AsyncSession,
+    *,
+    run_id: uuid.UUID,
+    error: str,
+    config: EvaluationConfiguration | None = None,
+) -> EvaluationRun:
+    """Store a failed evaluation so a benchmark can count it and say why.
+
+    The run keeps its own status: an evaluation that could not reach a verdict is not
+    evidence against the patch, and a benchmark that recorded it as one would report a
+    provider outage as a rejection.
+    """
+
+    run = await session.get(Run, run_id)
+    if run is None:
+        raise JudgeServiceError(f"run {run_id} does not exist")
+    return await store_failed_evaluation(
+        session,
+        run_id=run_id,
+        task_id=run.task_id,
+        subject_ref=run.task_id,
+        config=config or judge_configuration(),
+        error=error,
+    )
+
+
 def _reasoning(run: modes.JudgeRun) -> str:
     """The judges' own summaries, labelled by judge, in one bounded paragraph."""
 
@@ -200,8 +239,23 @@ def _reasoning(run: modes.JudgeRun) -> str:
     return "\n\n".join(part for part in parts if part.strip())[:REASONING_LIMIT]
 
 
+#: Everything a judged evaluation can raise on a corpus of mixed quality. A bench uses one
+#: tuple so a new failure mode is caught by both the command and the batch, not only one.
+JUDGE_FAILURES: tuple[type[Exception], ...] = (
+    JudgeServiceError,
+    JudgeError,
+    JudgeResponseError,
+    PromptError,
+    ScoringError,
+    EvaluationError,
+    LlmError,
+    ValueError,
+)
+
+
 __all__ = [
     "INDEPENDENCE_NOTE",
+    "JUDGE_FAILURES",
     "REASONING_LIMIT",
     "SHARED_SESSION_NOTE",
     "JudgeServiceError",
@@ -209,6 +263,7 @@ __all__ = [
     "evaluate_run",
     "independence_note",
     "judge_configuration",
+    "record_failure",
     "require_secure_endpoint",
     "setup_from_settings",
 ]

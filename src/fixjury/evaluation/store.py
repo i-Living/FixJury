@@ -21,6 +21,7 @@ from fixjury.config import settings
 from fixjury.evaluation.contracts import (
     AssessmentSummary,
     CriterionScore,
+    EvaluationConfiguration,
     EvaluationFinding,
     EvaluationRequest,
     EvaluationResult,
@@ -37,6 +38,14 @@ from fixjury.models import (
     EvaluationSource,
     EvaluationStatus,
 )
+
+#: What a failed evaluation records where a finished one records its scoring version.
+#: A failure happened before any score existed, and pretending otherwise would make the
+#: row look comparable with a scored one.
+UNSCORED = "unscored"
+
+#: One failure message, bounded: the column is a reason, not a log file.
+ERROR_LIMIT = 2000
 
 
 class StoreError(RuntimeError):
@@ -135,6 +144,49 @@ async def store_evaluation(
                 impact=finding.impact,
             )
         )
+    await session.flush()
+    return run
+
+
+async def store_failed_evaluation(
+    session: AsyncSession,
+    *,
+    run_id: uuid.UUID,
+    task_id: str,
+    subject_ref: str,
+    config: EvaluationConfiguration,
+    error: str,
+    started_at: datetime | None = None,
+) -> EvaluationRun:
+    """Record an evaluation that could not produce a verdict, and why.
+
+    A judge failure is not a verdict about a patch: it is the absence of one. It is stored
+    so a benchmark can count it, and it keeps the configuration it ran under so a retry is
+    a new row rather than a rewrite.
+    """
+
+    finished_at = datetime.now(UTC)
+    run = EvaluationRun(
+        source=EvaluationSource.benchmark,
+        subject_ref=subject_ref,
+        task_id=task_id,
+        run_id=run_id,
+        config=config.model_dump(mode="json"),
+        config_hash=config.config_hash(),
+        scoring_profile=config.profile,
+        scoring_version=UNSCORED,
+        assessments=[],
+        judge_config_hash=None,
+        status=EvaluationStatus.failed,
+        tokens_in=0,
+        tokens_out=0,
+        cost_list_usd=Decimal("0"),
+        pricing_version=settings.pricing_version,
+        started_at=started_at,
+        finished_at=finished_at,
+        error=error.strip()[:ERROR_LIMIT] or "evaluation failed without a message",
+    )
+    session.add(run)
     await session.flush()
     return run
 
@@ -239,6 +291,8 @@ async def evaluations_for_run(session: AsyncSession, run_id: uuid.UUID) -> list[
 
 
 __all__ = [
+    "ERROR_LIMIT",
+    "UNSCORED",
     "StoreError",
     "StoredEvaluation",
     "evaluations_for_run",
@@ -246,4 +300,5 @@ __all__ = [
     "result_findings",
     "result_from_rows",
     "store_evaluation",
+    "store_failed_evaluation",
 ]

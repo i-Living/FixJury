@@ -48,6 +48,14 @@ the PostgreSQL enum types it created (AGENTS.md pitfall: enum types outlive thei
   starts recording a named judge configuration
 - no column is dropped or rewritten; no historical row is touched
 
+**Revision `0006_evaluation_error`**
+
+- `evaluation_runs` gains one nullable `error` column: `status = failed` said an evaluation
+  failed, and nothing said why. A benchmark that judges every pair has to tell a provider
+  timeout from a run that carried no evidence to judge, and a log line is not a database row.
+- no table is touched otherwise; no historical row is rewritten. `scoring_version` stays NOT
+  NULL: a failed evaluation stores the literal `unscored`, which is what it was.
+
 **Revision `0005_judge_assessments`**
 
 - tables: `judge_configurations`, `judge_assessments`, `judge_escalations`

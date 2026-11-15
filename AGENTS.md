@@ -48,9 +48,10 @@ uv run fixjury tasks validate benchmarks  # corpus check
 uv run fixjury run --task T-001 --agent baseline
 uv run fixjury verify --run <id>          # fresh container, policy, held-out
 uv run fixjury judge evaluate --run <id> # AI Judge: score, verdict, stored with its evidence
-uv run fixjury bench --agents baseline,mini --verify
+uv run fixjury bench --agents baseline,mini --verify [--judge]
 uv run fixjury review pack && uv run fixjury review serve
 uv run fixjury metrics compute --agent baseline
+uv run fixjury leaderboard --out docs/leaderboard  # rankings from snapshots, with sample sizes
 (cd web && npm ci)                        # once, Node 20.9 or newer
 uv run fixjury report --charts && uv run fixjury dashboard
 uv run fixjury export --out docs/export   # raw runs/verdicts/rejections as JSONL + hashed manifest
@@ -84,13 +85,15 @@ src/fixjury/run.py         run one agent on one task, record it in runs
 src/fixjury/telemetry.py   OTel spans; the trace id is stored on every run
 src/fixjury/tasks/         task.yaml schema, loader, freeze and validate
 src/fixjury/spec/          RepairSpec generation and rendering
-src/fixjury/agents/        AgentAdapter protocol + baseline + mini + openhands + container harness
+src/fixjury/agents/        AgentAdapter protocol + baseline + mini + openhands + container harness,
+                           sdk.py (the five-operation contract a new integration implements)
 src/fixjury/sandbox/       container lifecycle, per-run network, tool API, diff capture, egress proxy
 src/fixjury/verify/        check runner, held-out tests, policy, verdict assembly
 src/fixjury/review/        blind batching, rubric, review page (app.py + templates/)
 src/fixjury/metrics/       metric definitions (compute.py), snapshots (service.py), cost
 src/fixjury/evaluation/    evaluation contracts, structured check evidence, scoring engine
 src/fixjury/judge/         AI Judge: provider, validated reply schema, prompts, modes, aggregation
+src/fixjury/leaderboard/   rankings read from snapshots: order, sample floor, revision disclosure
 src/fixjury/report/        markdown report, charts, the snapshot export the metrics page is built from
 src/fixjury/export.py      raw runs/verdicts/rejections as JSONL, with a hashed manifest
 src/fixjury/prompts/       *.md prompt files (English)

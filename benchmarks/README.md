@@ -1,6 +1,6 @@
 # The frozen corpus
 
-Thirty real Python defects, each frozen at the commit that preceded its upstream fix. Every
+Thirty-two real Python defects, each frozen at the commit that preceded its upstream fix. Every
 task in this directory is data, not code: the loader, validator and runner live in
 `src/fixjury/tasks/`.
 
@@ -48,6 +48,38 @@ environment per task and requires:
 
 This is corpus QA on the host, not verification: verdicts are produced later, in a fresh
 container, by the phase 3 runner.
+
+## Recorded metadata
+
+V1.1 decided not to grow the corpus (PLAN_V1.1 decision 2), so a leaderboard can only group by
+what the frozen files record today. This is that inventory, audited at `corpus-1`:
+
+| Field | Where it lives | Values in `corpus-1` |
+| --- | --- | --- |
+| `corpus_version` | `index.json` | `corpus-1`, frozen `2026-11-12` |
+| task count | `index.json` | 32, across 8 repositories |
+| `difficulty` | `tasks/<id>/task.yaml` | 18 `medium`, 8 `easy`, 6 `hard` |
+| `license` | `tasks/<id>/task.yaml` | 28 MIT, 3 BSD-3-Clause, 1 Apache-2.0 |
+| `base_commit`, `fix_commit` | `tasks/<id>/task.yaml` | one full sha each, both non-empty |
+| `checks`, `allowed_paths` | `tasks/<id>/task.yaml` | pytest / ruff / mypy, relative paths only |
+| held-out bundle | `heldout/<id>/` | 32 of 32 with `sanity.json` |
+| language | — | **not recorded per task**; every task is a Python repository |
+| task category | — | **not recorded per task** |
+
+Two consequences, both visible in the artefacts rather than papered over:
+
+- `fixjury leaderboard` ranks `overall` and `difficulty`, and its output states that language
+  and category have no ranking because the corpus does not record them. Adding the field would
+  mean editing a frozen `task.yaml`, which AGENTS.md invariant 9 forbids once a run exists: it
+  would be a new task version, not a metadata patch.
+- every leaderboard entry carries the `corpus_version`, the run `config_hash`, the verdict
+  source and the judge configuration hash, so two rankings are only comparable when they agree
+  on all four.
+
+Reproducibility is the `sanity.json` record: `base_checks` must exit 0 on a pristine checkout,
+which is the no-op baseline that proves a task does not flake on its own tests before any agent
+touches it. `uv run fixjury tasks validate benchmarks` refuses a task whose `sanity.json` is
+missing, stale for the recorded commits, or says a stage behaved otherwise.
 
 ## Adding a task
 

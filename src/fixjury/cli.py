@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from pathlib import Path
 from typing import Annotated
@@ -14,21 +15,26 @@ from fixjury.agents.registry import UnknownAgentError, build_adapter
 from fixjury.api.app import create_app as create_api_app
 from fixjury.bench import BenchError, BenchSummary, drain, enqueue_plan, load_plan
 from fixjury.db import make_engine, make_session_maker, session_scope
-from fixjury.evaluation.scoring import ScoringError
-from fixjury.evaluation.service import EvaluationError
 from fixjury.export import MANIFEST_FILENAME, export_rows
-from fixjury.judge.evaluator import JudgeError
-from fixjury.judge.prompts import PromptError
-from fixjury.judge.schema import JudgeResponseError
 from fixjury.judge.service import (
+    JUDGE_FAILURES,
     JudgedEvaluation,
-    JudgeServiceError,
     judge_configuration,
 )
 from fixjury.judge.service import (
     evaluate_run as judge_run,
 )
-from fixjury.llm import LlmError
+from fixjury.leaderboard import (
+    DIMENSIONS,
+    LeaderboardError,
+    build_leaderboard,
+)
+from fixjury.leaderboard import (
+    as_payload as leaderboard_payload,
+)
+from fixjury.leaderboard import (
+    render_markdown as render_leaderboard,
+)
 from fixjury.metrics.service import (
     MetricsError,
     compute_snapshot,
@@ -52,7 +58,7 @@ from fixjury.review.pack import pack_batches
 from fixjury.run import RunError, ensure_task, run_task
 from fixjury.sandbox.network import reap_networks
 from fixjury.tasks.cli import app as tasks_app
-from fixjury.tasks.loader import read_task, task_path
+from fixjury.tasks.loader import TaskFileError, read_index, read_task, task_path
 from fixjury.verify.runner import VerificationError
 from fixjury.verify.service import VerifyError, verify_run
 from fixjury.worker import WorkerError, acknowledge, redis_client, work_once
@@ -224,16 +230,7 @@ def judge_evaluate(
 
     try:
         judged = asyncio.run(go())
-    except (
-        JudgeServiceError,
-        JudgeError,
-        JudgeResponseError,
-        PromptError,
-        ScoringError,
-        EvaluationError,
-        LlmError,
-        ValueError,
-    ) as exc:
+    except JUDGE_FAILURES as exc:
         typer.echo(f"judge failed: {exc}", err=True)
         raise typer.Exit(code=2) from exc
 
@@ -476,6 +473,71 @@ def report(
 
 
 @app.command()
+def leaderboard(
+    dimensions: Annotated[
+        str, typer.Option("--dimensions", help="Comma-separated: overall, difficulty.")
+    ] = "overall,difficulty",
+    corpus: Annotated[Path, typer.Option("--corpus", help="Corpus root.")] = Path("benchmarks"),
+    out: Annotated[
+        Path | None, typer.Option("--out", help="Directory for leaderboard.md and .json.")
+    ] = None,
+    snapshot: Annotated[
+        str | None, typer.Option("--snapshot", help="Rank one snapshot id only.")
+    ] = None,
+) -> None:
+    """Rank the agents from stored snapshots, with sample sizes and intervals."""
+
+    selected = tuple(item.strip() for item in dimensions.split(",") if item.strip())
+    unknown = [item for item in selected if item not in DIMENSIONS]
+    if unknown:
+        recorded = ", ".join(DIMENSIONS)
+        typer.echo(
+            f"unknown dimension(s) {', '.join(unknown)}; the corpus records {recorded}",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    async def go() -> list[MetricSnapshot]:
+        engine = make_engine()
+        try:
+            async with session_scope(make_session_maker(engine)) as session:
+                if snapshot is not None:
+                    found = await snapshot_by_id(session, uuid.UUID(snapshot))
+                    if found is None:
+                        raise SystemExit(f"no snapshot {snapshot}")
+                    return [found]
+                return await latest_snapshots(session, agent=None)
+        finally:
+            await engine.dispose()
+
+    snapshots = asyncio.run(go())
+    if not snapshots:
+        typer.echo("no snapshots yet: run `fixjury metrics compute` first", err=True)
+        raise typer.Exit(code=1)
+    payloads = [snapshot.payload for snapshot in snapshots]
+    try:
+        version = read_index(corpus).corpus_version
+        boards = [
+            build_leaderboard(payloads, corpus_version=version, dimension=dimension)
+            for dimension in selected
+        ]
+    except (LeaderboardError, TaskFileError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    text = "\n\n".join(render_leaderboard(board) for board in boards)
+    typer.echo(text)
+    if out is not None:
+        out.mkdir(parents=True, exist_ok=True)
+        target = out / "README.md"
+        target.write_text(text + "\n", encoding="utf-8")
+        (out / "leaderboard.json").write_text(
+            json.dumps([leaderboard_payload(board) for board in boards], indent=2) + "\n",
+            encoding="utf-8",
+        )
+        typer.echo(f"wrote {target} and leaderboard.json")
+
+
+@app.command()
 def export(
     out: Annotated[Path, typer.Option("--out", help="Directory for the JSONL files.")] = Path(
         "docs/export"
@@ -567,9 +629,25 @@ def bench(
     verify: Annotated[
         bool, typer.Option("--verify", help="Verify every finished run as it lands.")
     ] = False,
+    judge: Annotated[
+        bool,
+        typer.Option(
+            "--judge",
+            help="Judge every verified run (requires --verify: the judge reads the verdict).",
+        ),
+    ] = False,
     image: Annotated[str | None, typer.Option("--image", help="Sandbox image override.")] = None,
 ) -> None:
     """Queue a task x agent grid, run it, and report what happened."""
+
+    if judge and not verify:
+        # A judge needs the check evidence verification records; without it every pair
+        # would fail as unevaluable, which looks like a judge problem and is a flag problem.
+        typer.echo(
+            "--judge needs --verify: the judge evaluates the verdict, it cannot run without it",
+            err=True,
+        )
+        raise typer.Exit(code=2)
 
     selected_agents = tuple(item.strip() for item in agents.split(",") if item.strip())
     selected_tasks = tuple(item.strip() for item in tasks.split(",") if item.strip())
@@ -605,6 +683,7 @@ def bench(
                 image=image,
                 max_seconds=max_seconds,
                 verify=verify,
+                judge=judge,
             )
         finally:
             await client.aclose()  # type: ignore[attr-defined]
@@ -613,7 +692,8 @@ def bench(
     summary = asyncio.run(go())
     typer.echo(
         f"bench done in {summary.elapsed_s}s: finished={summary.finished} "
-        f"failed={summary.failed} verified={summary.verified} "
+        f"failed={summary.failed} verified={summary.verified} judged={summary.judged} "
+        f"judge_failed={summary.judge_failed} "
         f"budget_stop={summary.stopped_on_budget} statuses={summary.statuses}"
     )
     if summary.failed:
