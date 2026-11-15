@@ -14,14 +14,36 @@ from fixjury.agents.registry import UnknownAgentError, build_adapter
 from fixjury.api.app import create_app as create_api_app
 from fixjury.bench import BenchError, BenchSummary, drain, enqueue_plan, load_plan
 from fixjury.db import make_engine, make_session_maker, session_scope
+from fixjury.evaluation.scoring import ScoringError
+from fixjury.evaluation.service import EvaluationError
 from fixjury.export import MANIFEST_FILENAME, export_rows
+from fixjury.judge.evaluator import JudgeError
+from fixjury.judge.prompts import PromptError
+from fixjury.judge.schema import JudgeResponseError
+from fixjury.judge.service import (
+    JudgedEvaluation,
+    JudgeServiceError,
+    judge_configuration,
+)
+from fixjury.judge.service import (
+    evaluate_run as judge_run,
+)
+from fixjury.llm import LlmError
 from fixjury.metrics.service import (
     MetricsError,
     compute_snapshot,
     latest_snapshots,
     snapshot_by_id,
 )
-from fixjury.models import CostBasis, MetricSnapshot, ReviewBatch, Run, RunStatus, Verdict
+from fixjury.models import (
+    CostBasis,
+    EvaluationVerdict,
+    MetricSnapshot,
+    ReviewBatch,
+    Run,
+    RunStatus,
+    Verdict,
+)
 from fixjury.report.charts import render_charts, render_regression_split
 from fixjury.report.dashboard import DashboardError, build_dashboard
 from fixjury.report.markdown import render_agent_table, render_report
@@ -163,6 +185,72 @@ def verify(
         f"tools={verdict.tool_versions}"
     )
     if not verdict.automated_pass:
+        raise typer.Exit(code=1)
+
+
+judge_app = typer.Typer(no_args_is_help=True, add_completion=False)
+app.add_typer(judge_app, name="judge")
+
+
+@judge_app.command("evaluate")
+def judge_evaluate(
+    run_id: Annotated[str, typer.Option("--run", help="Run id (UUID) to judge.")],
+    corpus: Annotated[Path, typer.Option("--corpus", help="Corpus root.")] = Path("benchmarks"),
+    mode: Annotated[
+        str | None,
+        typer.Option("--mode", help="Judge mode: single, adaptive (default) or multi."),
+    ] = None,
+) -> None:
+    """Judge a verified run and store the evaluation it produces."""
+
+    try:
+        identifier = uuid.UUID(run_id)
+    except ValueError as exc:
+        typer.echo(f"not a run id: {run_id!r}", err=True)
+        raise typer.Exit(code=2) from exc
+
+    async def go() -> JudgedEvaluation:
+        engine = make_engine()
+        try:
+            async with session_scope(make_session_maker(engine)) as session:
+                return await judge_run(
+                    session,
+                    run_id=identifier,
+                    corpus_root=corpus,
+                    config=judge_configuration(mode=mode),
+                )
+        finally:
+            await engine.dispose()
+
+    try:
+        judged = asyncio.run(go())
+    except (
+        JudgeServiceError,
+        JudgeError,
+        JudgeResponseError,
+        PromptError,
+        ScoringError,
+        EvaluationError,
+        LlmError,
+        ValueError,
+    ) as exc:
+        typer.echo(f"judge failed: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+
+    result = judged.result
+    judges = ", ".join(
+        f"{assessment.judge_id}={assessment.response.verdict.value}"
+        f"({assessment.response.confidence:.2f})"
+        for assessment in judged.assessments
+    )
+    typer.echo(
+        f"evaluation {judged.evaluation.id} verdict={result.verdict.value} "
+        f"score={result.score.overall:.2f} confidence={result.confidence:.2f} "
+        f"judges=[{judges}] findings={len(result.findings)}"
+    )
+    for limitation in result.limitations:
+        typer.echo(f"  limitation: {limitation}")
+    if result.verdict is not EvaluationVerdict.ACCEPTED:
         raise typer.Exit(code=1)
 
 

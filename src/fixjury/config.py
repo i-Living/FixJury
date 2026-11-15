@@ -51,5 +51,18 @@ class Settings(BaseSettings):
     evaluation_config: str = "config/evaluation.yaml"
     evaluation_profile: str = "default"
 
+    # AI Judge: the same subscription as the agent, a different and stronger model, its own
+    # session. Empty values fall back to the LLM settings above; the model is required,
+    # because a judge that silently reuses the agent's model is not an independent judge.
+    judge_base_url: str = ""
+    judge_api_key: str = ""
+    judge_session: str = ""
+    judge_model: str = ""
+    judge_escalation_model: str = ""
+    judge_mode: str = "adaptive"
+    judge_timeout_s: float = 300.0
+    judge_token_budget: int = 200_000
+    judge_confidence_threshold: float = 0.6
+
 
 settings = Settings()

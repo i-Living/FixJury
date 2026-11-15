@@ -385,3 +385,67 @@ class EvaluationFinding(Base):
     path: Mapped[str | None] = mapped_column(String(512))
     line: Mapped[int | None] = mapped_column(Integer)
     impact: Mapped[str] = mapped_column(Text)
+
+
+class JudgeConfiguration(Base):
+    """Who judged, with which models, under which policy — named by its digest."""
+
+    __tablename__ = "judge_configurations"
+    __table_args__ = (Index("ix_judge_configurations_hash", "config_hash", unique=True),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    mode: Mapped[str] = mapped_column(String(16))
+    provider: Mapped[str] = mapped_column(String(64))
+    primary_model: Mapped[str] = mapped_column(String(128))
+    escalation_model: Mapped[str | None] = mapped_column(String(128))
+    config: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    config_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class JudgeAssessment(Base):
+    """One judge's answer to one patch, with the numbers needed to audit it."""
+
+    __tablename__ = "judge_assessments"
+    __table_args__ = (Index("ix_judge_assessments_evaluation", "evaluation_run_id"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    evaluation_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("evaluation_runs.id", ondelete="CASCADE")
+    )
+    judge_configuration_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("judge_configurations.id", ondelete="CASCADE")
+    )
+    judge_id: Mapped[str] = mapped_column(String(32))
+    provider: Mapped[str] = mapped_column(String(64))
+    model: Mapped[str] = mapped_column(String(128))
+    prompt_version: Mapped[str] = mapped_column(String(32))
+    verdict: Mapped[EvaluationVerdict] = mapped_column(EVIDENCE_VERDICT)
+    overall_score: Mapped[Decimal] = mapped_column(Numeric(5, 2))
+    confidence: Mapped[Decimal] = mapped_column(Numeric(4, 3))
+    escalated: Mapped[bool] = mapped_column(default=False)
+    #: The model's reply as it arrived. A normalised row cannot hold what the model said,
+    #: and a calibration run needs the original.
+    raw: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    tokens_in: Mapped[int] = mapped_column(Integer, default=0)
+    tokens_out: Mapped[int] = mapped_column(Integer, default=0)
+    cost_list_usd: Mapped[Decimal] = mapped_column(Numeric(10, 4), default=Decimal("0"))
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class JudgeEscalation(Base):
+    """Why another judge was asked, or why it was not."""
+
+    __tablename__ = "judge_escalations"
+    __table_args__ = (Index("ix_judge_escalations_evaluation", "evaluation_run_id"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    evaluation_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("evaluation_runs.id", ondelete="CASCADE")
+    )
+    round_no: Mapped[int] = mapped_column(SmallInteger, default=1)
+    escalated: Mapped[bool] = mapped_column(default=False)
+    triggers: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
