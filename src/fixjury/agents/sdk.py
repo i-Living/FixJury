@@ -141,9 +141,13 @@ def terminate(session: AdapterSession) -> None:
 
     The adapter's container cleanup happens in its own ``run()``, which is exactly why this
     cancels instead of waiting: the caller asked for the run to stop, not to be kept alive
-    until a sandbox finishes tearing itself down.
+    until a sandbox finishes tearing itself down. A second call returns immediately — asking
+    again would forward a new cancellation into the adapter's own cleanup, which is the one
+    thing that must be allowed to finish.
     """
 
+    if session.terminated:
+        return
     session.terminated = True
     if session.running is not None and not session.running.done():
         session.running.cancel()

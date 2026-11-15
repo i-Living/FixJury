@@ -72,6 +72,15 @@ class JudgeServiceError(RuntimeError):
     """The evaluation cannot be judged."""
 
 
+class FailureRecorded(JudgeServiceError):
+    """This failure already wrote its own evaluation row.
+
+    `evaluate_run` stores a failed evaluation itself when the judge answered and a later
+    step broke, because only it holds the assessments that were paid for. A caller that
+    catches the error must not write a second, empty row for the same invocation.
+    """
+
+
 @dataclass(frozen=True)
 class JudgedEvaluation:
     """What one invocation produced, for the CLI to print and the tests to assert."""
@@ -193,7 +202,7 @@ async def evaluate_run(
             error="the judge produced no assessment",
             assessments=summaries,
         )
-        raise JudgeServiceError("the judge produced no assessment")
+        raise FailureRecorded("the judge produced no assessment") from None
 
     try:
         scoring_profile = profile or load_profile(
@@ -224,7 +233,7 @@ async def evaluate_run(
             error=str(exc),
             assessments=summaries,
         )
-        raise
+        raise FailureRecorded(str(exc)) from exc
     stored = await store_evaluation(session, request=request, result=result)
     configuration_row = await store_configuration(
         session, setup=resolved_setup, config=configuration
@@ -296,6 +305,7 @@ __all__ = [
     "JUDGE_FAILURES",
     "REASONING_LIMIT",
     "SHARED_SESSION_NOTE",
+    "FailureRecorded",
     "JudgeServiceError",
     "JudgedEvaluation",
     "evaluate_run",

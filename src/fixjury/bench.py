@@ -22,7 +22,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fixjury import queue
 from fixjury.db import SessionMaker, session_scope
-from fixjury.judge.service import JUDGE_FAILURES, judge_configuration, record_failure
+from fixjury.judge.service import (
+    JUDGE_FAILURES,
+    FailureRecorded,
+    judge_configuration,
+    record_failure,
+)
 from fixjury.judge.service import evaluate_run as judge_run
 from fixjury.models import Run, RunStatus
 from fixjury.run import ensure_task
@@ -195,10 +200,13 @@ async def judge_verified_run(session: AsyncSession, *, run: Run, corpus_root: Pa
         return JudgeStep(judged=True)
     except JUDGE_FAILURES as exc:
         LOGGER.warning("judging %s failed: %s", run.id, exc)
-        try:
-            await record_failure(session, run_id=run.id, error=str(exc))
-        except JUDGE_FAILURES as store_exc:  # pragma: no cover - a missing run row
-            LOGGER.error("could not record the judge failure of %s: %s", run.id, store_exc)
+        if not isinstance(exc, FailureRecorded):
+            # One row per invocation: a failure that already wrote its assessments must not
+            # be followed by a second, empty row claiming the judgement was free.
+            try:
+                await record_failure(session, run_id=run.id, error=str(exc))
+            except JUDGE_FAILURES as store_exc:  # pragma: no cover - a missing run row
+                LOGGER.error("could not record the judge failure of %s: %s", run.id, store_exc)
         return JudgeStep(judged=False, error=str(exc))
 
 

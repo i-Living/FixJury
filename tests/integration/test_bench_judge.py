@@ -23,6 +23,7 @@ from fixjury.bench import JudgeStep, judge_verified_run
 from fixjury.config import settings
 from fixjury.db import make_engine
 from fixjury.evaluation.store import UNSCORED
+from fixjury.judge.service import FailureRecorded
 from fixjury.models import (
     EvaluationResult,
     EvaluationRun,
@@ -298,3 +299,33 @@ def test_an_invalid_judge_setting_is_still_recorded(monkeypatch: pytest.MonkeyPa
 
     assert step.judged is False
     assert rows == 1, "the failure is stored even though the configuration could not validate"
+
+
+def test_a_failure_that_recorded_itself_is_not_recorded_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`evaluate_run` stores its own late failure; the bench must not add an empty row."""
+
+    require_postgres()
+
+    async def recorded(session: AsyncSession, **kwargs: object) -> None:
+        raise FailureRecorded("the judge produced no assessment")
+
+    monkeypatch.setattr("fixjury.bench.judge_run", recorded)
+
+    async def scenario() -> tuple[JudgeStep, int]:
+        async with rolled_back_session() as session:
+            run = await add_run(session)
+            step = await judge_verified_run(session, run=run, corpus_root=CORPUS)
+            rows = list(
+                (await session.execute(select(EvaluationRun).where(EvaluationRun.run_id == run.id)))
+                .scalars()
+                .all()
+            )
+            return step, len(rows)
+
+    step, rows = asyncio.run(scenario())
+
+    assert step.judged is False
+    assert step.error == "the judge produced no assessment"
+    assert rows == 0, "the failure row belongs to the layer that holds the assessments"

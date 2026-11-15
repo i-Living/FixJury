@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import contextlib
 from decimal import Decimal
 from pathlib import Path
 
@@ -254,3 +255,38 @@ def test_two_overlapping_calls_run_the_agent_once() -> None:
 
     assert started == 1
     assert refused == 1
+
+
+def test_a_second_terminate_does_not_interrupt_the_cleanup() -> None:
+    """Cancelling again would forward a new cancellation into the adapter's own teardown."""
+
+    class SlowCleanup(FakeAdapter):
+        def __init__(self) -> None:
+            super().__init__()
+            self.cleaned_up = False
+
+        async def run(self, request: RunRequest) -> AgentResult:
+            try:
+                await asyncio.sleep(30)
+            finally:
+                # Stands in for a container being removed.
+                await asyncio.sleep(0.02)
+                self.cleaned_up = True
+            return self.answer
+
+    async def scenario() -> tuple[bool, bool]:
+        adapter = SlowCleanup()
+        session = prepare(adapter, request())
+        task = asyncio.ensure_future(execute(session))
+        await asyncio.sleep(0.01)
+        terminate(session)
+        await asyncio.sleep(0.005)
+        terminate(session)
+        with contextlib.suppress(SdkError):
+            await task
+        return adapter.cleaned_up, session.terminated
+
+    cleaned_up, terminated = asyncio.run(scenario())
+
+    assert terminated is True
+    assert cleaned_up is True, "the adapter's cleanup ran to completion"
