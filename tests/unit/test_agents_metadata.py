@@ -18,13 +18,31 @@ def test_the_baseline_declares_itself() -> None:
     assert metadata.known is True
 
 
-def test_a_pinned_harness_declares_its_image() -> None:
+def test_a_pinned_harness_declares_its_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Pinned here rather than read from the environment: CI has no image configured, and a
+    # test that inherited that would assert nothing about the declared path.
+    monkeypatch.setattr(settings, "mini_image", "fixjury-mini:9.9.9")
+    monkeypatch.setattr(settings, "mini_version", "9.9.9")
+
     metadata = describe("mini")
 
     assert metadata.kind == "container-harness"
-    assert metadata.image == settings.mini_image
-    assert metadata.version == settings.mini_version
+    assert metadata.image == "fixjury-mini:9.9.9"
+    assert metadata.version == "9.9.9"
     assert metadata.known is True
+
+
+def test_an_unpinned_harness_declares_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "mini_image", "")
+    monkeypatch.setattr(settings, "mini_version", "")
+
+    metadata = describe("mini")
+
+    # "unpinned" is the honest version string here: nobody chose one, which is why the
+    # attribution is unknown rather than declared.
+    assert metadata.version == "unpinned"
+    assert metadata.image is None
+    assert metadata.attribution == UNKNOWN
 
 
 def test_a_harness_without_an_image_is_explicitly_unknown(
