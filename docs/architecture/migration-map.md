@@ -112,6 +112,12 @@ demonstrate before the next one starts.
 | 6.1–6.2 | API and dashboard | `api/`, `web/`, tests + typecheck | evaluation endpoints and pages; existing pages unchanged |
 | 7.x | release | docs, compose, runbook | full chain green, migration on a clean database, USAGE updated |
 
+**Landed so far:** 0.1–0.3 (this document set), 1.1–1.4 (contracts, coverage and structured check evidence,
+scoring engine, evaluation persistence — revisions `0003_verdict_evidence` and `0004_evaluation_core`) and
+2.1–2.6 (provider, validated reply schema, versioned prompts, three modes, escalation and budgets,
+aggregation, per-assessment observability — revision `0005_judge_assessments`). Task 2.7 (calibration
+metrics) has no task where the numbers would be read yet: it lands with the metrics extension in phase 3.
+
 ## 5. Compatibility guarantees
 
 - Every existing CLI command keeps its name, options and output shape.

@@ -23,6 +23,10 @@ def test_models_declare_their_tables() -> None:
         "evaluation_runs",
         "evaluation_results",
         "evaluation_findings",
+        # V1.1 judge: who judged, what each judge said, and why another one was asked.
+        "judge_configurations",
+        "judge_assessments",
+        "judge_escalations",
     }
 
 

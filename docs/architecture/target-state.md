@@ -47,13 +47,17 @@ src/fixjury/
 │   ├── checks.py          CheckOutcome → structured CheckResult (incl. coverage)
 │   └── scoring.py         criteria, weights, critical rules, profile version
 ├── judge/                 new — AI Judge, provider-agnostic
-│   ├── provider.py        JudgeProvider protocol + opencode-go implementation
+│   ├── provider.py        JudgeProvider protocol + chat-completions implementation
 │   ├── schema.py          validated judge response model
-│   ├── evaluator.py       context construction, prompt, validation, persistence
+│   ├── prompts.py         loads versioned prompt files, versions them by digest
+│   ├── evaluator.py       context construction, prompt, validation, cost
 │   ├── modes.py           single / adaptive / multi
 │   ├── escalation.py      triggers, rounds, budgets
 │   ├── aggregate.py       final verdict policy
-│   └── prompts/           judge_evaluate.md, judge_escalate.md (versioned)
+│   ├── service.py         one judged evaluation, end to end
+│   └── store.py           judge configurations, assessments, escalations
+├── prompts/               judge_evaluate.md, judge_escalate.md (English, next to the
+│                          spec-drafting prompts, per AGENTS.md)
 ├── verify/                extended — coverage check, structured outcomes persisted
 ├── metrics/               extended — verdict source, judge and evaluation cost split
 ├── agents/sdk.py          new — thin lifecycle wrapper over AgentAdapter

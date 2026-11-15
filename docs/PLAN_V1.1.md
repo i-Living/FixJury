@@ -23,6 +23,9 @@ the consequence in the code are recorded in [`docs/architecture/target-state.md`
 Approved scope by phase: 0 yes, 1 yes, 2 yes, 3 partial (no corpus growth, no new agents), 4 no, 5 partial
 (analytics and attribution yes, repository policies deferred with phase 4), 6 yes, 7 yes.
 
+**Progress:** phases 0, 1 and 2 are implemented; `docs/architecture/migration-map.md` §4 lists what each
+task delivered. Task 2.7 (calibration metrics) and phase 3 are next.
+
 ## 1. Implementation Strategy
 
 Implementation follows three major stages:
