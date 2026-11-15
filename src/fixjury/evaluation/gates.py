@@ -135,11 +135,30 @@ class GateReport:
         )
 
 
+class _StrictLoader(yaml.SafeLoader):
+    """A safe loader that refuses a key written twice.
+
+    PyYAML keeps the last value silently, so `forbidden_paths: [".github/"]` followed by
+    `forbidden_paths: []` would quietly remove the rule the author meant to keep.
+    """
+
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[object, object]:
+        seen: set[object] = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if key in seen:
+                raise yaml.constructor.ConstructorError(
+                    None, None, f"duplicate key {key!r} in a policy file", key_node.start_mark
+                )
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
+
+
 def load_policy(path: Path, *, name: str = "default") -> GatePolicy:
     """Read one named policy out of a YAML file, refusing anything malformed."""
 
     try:
-        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+        payload = yaml.load(path.read_text(encoding="utf-8"), Loader=_StrictLoader)  # noqa: S506
     except OSError as exc:
         raise GateError(f"{path}: cannot read file: {exc}") from exc
     except yaml.YAMLError as exc:
@@ -279,6 +298,14 @@ def _gate_security(policy: GatePolicy, result: EvaluationResult) -> GateResult:
 
 
 def _gate_score(policy: GatePolicy, result: EvaluationResult) -> GateResult:
+    if result.verdict is EvaluationVerdict.INCONCLUSIVE:
+        # A score assembled without the judge's criteria is incomplete, not low: failing a
+        # policy minimum on it would report a gap in the evidence as a bad patch.
+        return GateResult(
+            rule="score",
+            outcome=GateOutcome.INCONCLUSIVE,
+            detail="the evaluation reached no decision, so its score is incomplete",
+        )
     if result.score.overall < policy.min_score:
         return GateResult(
             rule="score",
@@ -333,16 +360,29 @@ def _gate_size(
     )
 
 
+def _is_forbidden(path: str, forbidden: str) -> bool:
+    """An exact match, or a descendant of a forbidden directory.
+
+    A plain prefix would also match `.gitlab-ci.yml.example` against `.gitlab-ci.yml`, and
+    blocking a file that merely shares a name is a rule nobody asked for.
+    """
+
+    if path == forbidden:
+        return True
+    directory = forbidden if forbidden.endswith("/") else f"{forbidden}/"
+    return path.startswith(directory)
+
+
 def _gate_paths(policy: GatePolicy, changed: Sequence[ChangedFile]) -> GateResult:
     if not policy.forbidden_paths:
         return GateResult(rule="paths", outcome=GateOutcome.PASS, detail="no forbidden paths")
     touched = [
-        item.path
+        path
         for item in changed
-        if any(
-            item.path == forbidden or item.path.startswith(forbidden)
-            for forbidden in policy.forbidden_paths
-        )
+        # A rename away from a forbidden path still touched it: moving the file is how the
+        # rule would be removed, so the source counts too.
+        for path in (item.path, item.original_path)
+        if path and any(_is_forbidden(path, forbidden) for forbidden in policy.forbidden_paths)
     ]
     if touched:
         return GateResult(
@@ -384,6 +424,32 @@ def _gate_budget(policy: GatePolicy, result: EvaluationResult) -> GateResult:
             detail=f"{used} judge token(s) above {policy.max_judge_tokens}",
         )
     return GateResult(rule="budget", outcome=GateOutcome.PASS, detail=f"{used} judge token(s)")
+
+
+def evidence_mismatch(result: EvaluationResult, checks: Sequence[CheckResult]) -> str | None:
+    """Say why the checks no longer match the evaluation, or ``None`` when they do.
+
+    Re-verification rewrites ``verdicts.check_results`` in place, and the stored evaluation
+    keeps the findings it derived from the old ones. Gating that pair would combine a verdict
+    about one set of checks with the evidence of another — so the gate refuses and says which
+    command fixes it.
+    """
+
+    recorded = {
+        finding.evidence_ref
+        for finding in result.findings
+        if finding.source is FindingSource.automated
+        and finding.confirmed
+        and finding.evidence_ref.startswith("check:")
+    }
+    current = {f"check:{check.name}" for check in checks if check.status is CheckStatus.FAILED}
+    if recorded == current:
+        return None
+    return (
+        "the stored evaluation was made from different check evidence than the run carries "
+        f"now (recorded: {sorted(recorded) or 'none'}, current: {sorted(current) or 'none'}): "
+        "re-run `fixjury judge evaluate` on this run before gating it"
+    )
 
 
 def evaluate_gates(

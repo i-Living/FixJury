@@ -19,7 +19,13 @@ from fixjury.api.app import create_app as create_api_app
 from fixjury.bench import BenchError, BenchSummary, drain, enqueue_plan, load_plan
 from fixjury.db import make_engine, make_session_maker, session_scope
 from fixjury.evaluation.contracts import EvaluationConfiguration
-from fixjury.evaluation.gates import GateError, evaluate_gates, load_policy
+from fixjury.evaluation.gates import (
+    GateError,
+    GateOutcome,
+    evaluate_gates,
+    evidence_mismatch,
+    load_policy,
+)
 from fixjury.evaluation.service import EvaluationError, build_request
 from fixjury.evaluation.store import evaluations_for_run, load_evaluation
 from fixjury.export import MANIFEST_FILENAME, export_rows
@@ -597,6 +603,13 @@ def leaderboard(
 gates_app = typer.Typer(no_args_is_help=True, add_completion=False)
 app.add_typer(gates_app, name="gates")
 
+#: What a gate outcome means to a shell: the codes docs/USAGE.md documents.
+GATE_EXIT_CODES: dict[GateOutcome, int] = {
+    GateOutcome.PASS: 0,
+    GateOutcome.FAIL: 1,
+    GateOutcome.INCONCLUSIVE: 2,
+}
+
 
 @gates_app.command("check")
 def gates_check(
@@ -617,7 +630,7 @@ def gates_check(
         typer.echo(f"not a run id: {run_id!r}", err=True)
         raise typer.Exit(code=2) from exc
 
-    async def go() -> str:
+    async def go() -> tuple[str, GateOutcome]:
         engine = make_engine()
         try:
             async with session_scope(make_session_maker(engine)) as session:
@@ -641,22 +654,28 @@ def gates_check(
                     corpus_root=corpus,
                     config=EvaluationConfiguration.model_validate(newest.config),
                 )
+                mismatch = evidence_mismatch(stored.result, request.checks)
+                if mismatch is not None:
+                    raise GateError(mismatch)
                 report = evaluate_gates(
                     load_policy(config, name=policy),
                     request=request,
                     result=stored.result,
                     evaluation_run_id=str(newest.id),
                 )
-                return render_gate_report(report)
+                return render_gate_report(report), report.outcome
         finally:
             await engine.dispose()
 
     try:
-        text = asyncio.run(go())
+        text, outcome = asyncio.run(go())
     except (GateError, EvaluationError, ValidationError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
     typer.echo(text)
+    # The documented contract: PASS 0, FAIL 1, INCONCLUSIVE 2. A script gating a pipeline has
+    # to tell a failed rule from a rule nobody could evaluate.
+    raise typer.Exit(code=GATE_EXIT_CODES[outcome])
 
 
 @app.command()

@@ -20,6 +20,10 @@ from fixjury.agents.registry import HARNESSES, UnknownAgentError, build_adapter
 #: What a run records when nobody can say which agent version or model produced it.
 UNKNOWN = "unknown"
 
+#: Version strings a harness produces when nobody pinned one. None of them is a version, so
+#: none of them may make an attribution look declared.
+UNDECLARED_VERSIONS = frozenset({"", UNKNOWN, "unpinned"})
+
 
 @dataclass(frozen=True)
 class AgentMetadata:
@@ -53,7 +57,7 @@ def describe(name: str) -> AgentMetadata:
         # pinned one, and that is exactly the case where attribution is unknown.
         spec = getattr(adapter, "spec", None)
         image = getattr(spec, "image", "") or ""
-        attribution = "declared" if version != UNKNOWN and image else UNKNOWN
+        attribution = "declared" if version not in UNDECLARED_VERSIONS and image else UNKNOWN
         return AgentMetadata(
             name=name,
             version=version,
@@ -66,7 +70,7 @@ def describe(name: str) -> AgentMetadata:
         version=version,
         kind="baseline",
         image=None,
-        attribution="declared" if version != UNKNOWN else UNKNOWN,
+        attribution="declared" if version not in UNDECLARED_VERSIONS else UNKNOWN,
     )
 
 
@@ -90,4 +94,4 @@ def describe_all(names: tuple[str, ...]) -> tuple[AgentMetadata, ...]:
     return tuple(described)
 
 
-__all__ = ["UNKNOWN", "AgentMetadata", "describe", "describe_all"]
+__all__ = ["UNDECLARED_VERSIONS", "UNKNOWN", "AgentMetadata", "describe", "describe_all"]

@@ -76,3 +76,18 @@ def test_every_registered_agent_can_be_described() -> None:
 
     assert {item.name for item in described} == set(known_agents())
     assert all(item.attribution in {"declared", UNKNOWN} for item in described)
+
+
+def test_an_image_without_a_version_is_not_a_declared_attribution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tag alone says which container ran, not which agent: the version is still unknown."""
+
+    monkeypatch.setattr(settings, "mini_image", "fixjury-mini:2.4.6")
+    monkeypatch.setattr(settings, "mini_version", "")
+
+    metadata = describe("mini")
+
+    assert metadata.image == "fixjury-mini:2.4.6"
+    assert metadata.version == "unpinned"
+    assert metadata.attribution == UNKNOWN

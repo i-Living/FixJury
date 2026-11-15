@@ -23,6 +23,7 @@ from fixjury.evaluation.gates import (
     GatePolicy,
     GateReport,
     evaluate_gates,
+    evidence_mismatch,
     load_policy,
 )
 from fixjury.models import Criterion, EvaluationVerdict, FindingSeverity, FindingSource
@@ -388,3 +389,108 @@ def test_a_policy_with_an_unknown_key_is_refused(tmp_path: Path) -> None:
 def test_a_forbidden_path_must_be_relative() -> None:
     with pytest.raises(ValueError, match="relative"):
         GatePolicy(name="test", version="1", forbidden_paths=("/etc/passwd",))
+
+
+def test_a_rename_away_from_a_forbidden_path_still_fails() -> None:
+    """Moving the file is how the rule would be removed, so the source counts too."""
+
+    diff = (
+        "diff --git a/.github/workflows/ci.yml b/archived/ci.yml\n"
+        "similarity index 100%\n"
+        "rename from .github/workflows/ci.yml\n"
+        "rename to archived/ci.yml\n"
+    )
+
+    report = evaluate_gates(
+        GatePolicy(name="test", version="1", forbidden_paths=(".github/",)),
+        request=request(diff=diff),
+        result=result(),
+        evaluation_run_id="evaluation-1",
+    )
+
+    assert report.outcome is GateOutcome.FAIL
+    assert any(item.rule == "paths" for item in report.failures)
+
+
+def test_a_file_that_merely_shares_a_name_is_not_forbidden() -> None:
+    """`.gitlab-ci.yml.example` is not `.gitlab-ci.yml`, and blocking it is a rule nobody wrote."""
+
+    diff = (
+        "diff --git a/.gitlab-ci.yml.example b/.gitlab-ci.yml.example\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/.gitlab-ci.yml.example\n"
+        "@@ -0,0 +1 @@\n"
+        "+example\n"
+    )
+
+    report = evaluate_gates(
+        GatePolicy(name="test", version="1", forbidden_paths=(".gitlab-ci.yml",)),
+        request=request(diff=diff),
+        result=result(),
+        evaluation_run_id="evaluation-1",
+    )
+
+    paths = next(item for item in report.results if item.rule == "paths")
+    assert paths.outcome is GateOutcome.PASS
+
+
+def test_a_policy_file_with_a_duplicate_key_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "quality.yaml"
+    path.write_text(
+        "policies:\n"
+        "  default:\n"
+        "    version: '1'\n"
+        "    forbidden_paths: ['.github/']\n"
+        "    forbidden_paths: []\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(GateError, match="duplicate key"):
+        load_policy(path)
+
+
+def test_a_policy_file_with_a_duplicate_policy_name_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "quality.yaml"
+    path.write_text(
+        "policies:\n  default:\n    version: '1'\n  default:\n    version: '2'\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(GateError, match="duplicate key"):
+        load_policy(path)
+
+
+def test_a_gate_refuses_evidence_the_evaluation_never_saw() -> None:
+    """Re-verification rewrites the checks in place; the old verdict must not be gated."""
+
+    documented_request, documented_result = passing()
+    assert evidence_mismatch(documented_result, documented_request.checks) is None
+
+    newer = (
+        check("pytest tests/test_app.py", status=CheckStatus.FAILED, exit_code=1),
+        check("held-out"),
+    )
+    reason = evidence_mismatch(documented_result, newer)
+
+    assert reason is not None
+    assert "re-run" in reason
+    assert "check:pytest tests/test_app.py" in reason
+
+
+def test_a_score_without_a_judge_is_incomplete_not_low() -> None:
+    """Scoring a patch on the checks alone leaves the judge's criteria unanswered."""
+
+    documented_request, _ = passing()
+
+    report = evaluate_gates(
+        GatePolicy(name="test", version="1", min_score=90.0),
+        request=documented_request,
+        result=result(verdict=EvaluationVerdict.INCONCLUSIVE, overall=40.0),
+        evaluation_run_id="evaluation-1",
+    )
+
+    score_result = next(item for item in report.results if item.rule == "score")
+    assert score_result.outcome is GateOutcome.INCONCLUSIVE
+    assert "incomplete" in score_result.detail
+    assert report.outcome is GateOutcome.INCONCLUSIVE

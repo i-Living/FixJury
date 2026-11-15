@@ -8,6 +8,7 @@ from decimal import Decimal
 import pytest
 
 from fixjury.metrics.analytics import AnalyticsError, SnapshotRef, build_analytics
+from fixjury.report.quality import render_analytics
 
 DAY = datetime(2026, 11, 10, 12, 0, tzinfo=UTC)
 
@@ -170,3 +171,26 @@ def test_the_judge_statistics_come_from_the_snapshot_blocks() -> None:
     assert agent.false_acceptance_rate == 0.0
     assert agent.false_rejection_rate == 0.2
     assert agent.brier == 0.18
+
+
+def test_each_agent_carries_the_basis_and_version_its_money_was_priced_under() -> None:
+    report = build_analytics(
+        [
+            ref(agent="baseline", body=payload(cost="1.0000")),
+            ref(
+                agent="mini",
+                snapshot_id="s2",
+                cost_basis="amortized",
+                pricing_version="v2",
+                body=payload(cost="2.0000"),
+            ),
+        ]
+    )
+
+    baseline, mini = report.agents
+    assert (baseline.cost_basis, baseline.pricing_version) == ("list_price", "v1")
+    assert (mini.cost_basis, mini.pricing_version) == ("amortized", "v2")
+
+    text = render_analytics(report)
+    assert "1.0000 (list_price / v1)" in text
+    assert "2.0000 (amortized / v2)" in text

@@ -68,16 +68,18 @@ def render_analytics(report: AnalyticsReport) -> str:
         "",
         "## Agent standing",
         "",
-        "| Agent | Source | Pairs | Decided | Acceptance | Regression-free | Tokens | Cost "
-        "| Cost per accepted fix | Median repair | Judge evaluations | Judge cost "
-        "| False acceptance | False rejection | Brier |",
+        "| Agent | Source | Pairs | Decided | Acceptance | Regression-free | Tokens "
+        "| Cost (basis / version) | Cost per accepted fix | Median repair | Judge evaluations "
+        "| Judge cost (list price) | False acceptance | False rejection | Brier |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",  # noqa: E501
     ]
     for agent in report.agents:
+        pricing = f"{agent.cost_basis} / {agent.pricing_version or 'unknown'}"
         lines.append(
             f"| {agent.agent} | {agent.verdict_source} | {agent.pairs} | {agent.decided} "
             f"| {_percent(agent.acceptance_rate)} | {_percent(agent.regression_free_rate)} "
-            f"| {agent.tokens_total} | {_money(agent.cost_total)} "
+            f"| {agent.tokens_total} "
+            f"| {_money(agent.cost_total)} ({pricing}) "
             f"| {_money(agent.cost_per_accepted_fix)} "
             f"| {_number(agent.median_time_to_repair_s)} s "
             f"| {agent.evaluations} | {_money(agent.judge_cost_total)} "

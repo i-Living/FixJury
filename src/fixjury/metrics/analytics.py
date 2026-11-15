@@ -48,6 +48,10 @@ class AgentAnalytics:
     snapshot_id: str
     computed_at: datetime
     verdict_source: str
+    #: The basis and pricing version this agent's money was computed under. Two agents can
+    #: differ, and a cost column without them invites a comparison nobody measured.
+    cost_basis: str
+    pricing_version: str | None
     pairs: int
     decided: int
     accepted: int
@@ -174,6 +178,8 @@ def _agent_analytics(ref: SnapshotRef) -> AgentAnalytics:
         snapshot_id=ref.snapshot_id,
         computed_at=ref.computed_at,
         verdict_source=ref.verdict_source,
+        cost_basis=ref.cost_basis,
+        pricing_version=ref.pricing_version,
         pairs=int(_number(denominators, "pairs")),
         decided=_decided(denominators),
         accepted=int(_number(denominators, "accepted")),
