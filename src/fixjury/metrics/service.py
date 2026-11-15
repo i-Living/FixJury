@@ -304,6 +304,7 @@ async def compute_snapshot(
         (run, verdict, task) for run, verdict, task in rows if run.status is RunStatus.finished
     ]
     pricing_versions = sorted({run.pricing_version for run, _, _ in priced})
+    digest = config_hash_of(priced)
     payload = as_payload(
         report,
         cost_basis=cost_basis.value,
@@ -313,11 +314,14 @@ async def compute_snapshot(
         payload["judge"] = judge_block(ledger)
         payload["calibration"] = as_calibration_payload(calibrate(attempts))
     payload["groups"] = grouped_payload(attempts, agent=agent, verdict_source=verdict_source)
+    # The payload names the configuration it was computed under, so a reader holding only
+    # the JSON — an export, a leaderboard entry, the page — can say what it describes.
+    payload["config_hash"] = digest
     snapshot = MetricSnapshot(
         id=uuid.uuid4(),
         agent=agent,
         cost_basis=cost_basis,
-        config_hash=config_hash_of(priced),
+        config_hash=digest,
         payload=payload,
     )
     session.add(snapshot)

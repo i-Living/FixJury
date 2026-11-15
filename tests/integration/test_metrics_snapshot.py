@@ -144,6 +144,9 @@ def test_a_snapshot_is_computed_once_and_stored(monkeypatch: pytest.MonkeyPatch)
 
     payload = snapshot.payload
     assert payload["agent"] == "metrics-test"
+    # The payload names the configuration it was computed under: a leaderboard entry that
+    # holds only the JSON still says which runs it describes.
+    assert payload["config_hash"] == snapshot.config_hash
     assert payload["cost_basis"] == "list_price"
     denominators = payload["denominators"]
     assert isinstance(denominators, dict)

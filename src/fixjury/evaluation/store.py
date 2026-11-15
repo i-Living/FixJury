@@ -10,6 +10,7 @@ evaluation — so this never updates an existing result in place.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -21,6 +22,7 @@ from fixjury.config import settings
 from fixjury.evaluation.contracts import (
     AssessmentSummary,
     CriterionScore,
+    EvaluationConfiguration,
     EvaluationFinding,
     EvaluationRequest,
     EvaluationResult,
@@ -37,6 +39,14 @@ from fixjury.models import (
     EvaluationSource,
     EvaluationStatus,
 )
+
+#: What a failed evaluation records where a finished one records its scoring version.
+#: A failure happened before any score existed, and pretending otherwise would make the
+#: row look comparable with a scored one.
+UNSCORED = "unscored"
+
+#: One failure message, bounded: the column is a reason, not a log file.
+ERROR_LIMIT = 2000
 
 
 class StoreError(RuntimeError):
@@ -135,6 +145,57 @@ async def store_evaluation(
                 impact=finding.impact,
             )
         )
+    await session.flush()
+    return run
+
+
+async def store_failed_evaluation(
+    session: AsyncSession,
+    *,
+    run_id: uuid.UUID,
+    task_id: str,
+    subject_ref: str,
+    config: EvaluationConfiguration,
+    error: str,
+    assessments: Sequence[AssessmentSummary] = (),
+    started_at: datetime | None = None,
+) -> EvaluationRun:
+    """Record an evaluation that could not produce a verdict, and why.
+
+    A judge failure is not a verdict about a patch: it is the absence of one. It is stored
+    so a benchmark can count it, and it keeps the configuration it ran under so a retry is
+    a new row rather than a rewrite.
+
+    ``assessments`` are the calls that already happened when a later step failed. Dropping
+    them would report a paid judgement as free, which is the one number a cost section must
+    never invent.
+    """
+
+    finished_at = datetime.now(UTC)
+    tokens_in = sum(item.tokens_in for item in assessments)
+    tokens_out = sum(item.tokens_out for item in assessments)
+    cost = sum((item.cost_list_usd for item in assessments), Decimal("0"))
+    run = EvaluationRun(
+        source=EvaluationSource.benchmark,
+        subject_ref=subject_ref,
+        task_id=task_id,
+        run_id=run_id,
+        config=config.model_dump(mode="json"),
+        config_hash=config.config_hash(),
+        scoring_profile=config.profile,
+        scoring_version=UNSCORED,
+        assessments=[item.model_dump(mode="json") for item in assessments],
+        judge_config_hash=None,
+        status=EvaluationStatus.failed,
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        cost_list_usd=cost,
+        pricing_version=settings.pricing_version,
+        started_at=started_at,
+        finished_at=finished_at,
+        error=error.strip()[:ERROR_LIMIT] or "evaluation failed without a message",
+    )
+    session.add(run)
     await session.flush()
     return run
 
@@ -239,6 +300,8 @@ async def evaluations_for_run(session: AsyncSession, run_id: uuid.UUID) -> list[
 
 
 __all__ = [
+    "ERROR_LIMIT",
+    "UNSCORED",
     "StoreError",
     "StoredEvaluation",
     "evaluations_for_run",
@@ -246,4 +309,5 @@ __all__ = [
     "result_findings",
     "result_from_rows",
     "store_evaluation",
+    "store_failed_evaluation",
 ]

@@ -328,6 +328,9 @@ class EvaluationRun(Base):
     # Nullable until a judge configuration exists: phase 1 records what the evaluation
     # was configured with, phase 2 records which judge produced the assessment.
     judge_config_hash: Mapped[str | None] = mapped_column(String(64))
+    # Why a failed evaluation failed. Without it a benchmark can only count failures,
+    # not tell "the provider timed out" from "the run carried no evidence to judge".
+    error: Mapped[str | None] = mapped_column(Text)
     status: Mapped[EvaluationStatus] = mapped_column(
         SAEnum(EvaluationStatus, name="evaluation_status"), default=EvaluationStatus.running
     )

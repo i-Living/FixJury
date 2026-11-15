@@ -26,14 +26,26 @@ from fixjury.evaluation.contracts import (
     EvaluationContext,
     EvaluationResult,
 )
-from fixjury.evaluation.scoring import ScoringProfile, assemble_result, load_profile
-from fixjury.evaluation.service import build_request, default_configuration
-from fixjury.evaluation.store import store_evaluation
+from fixjury.evaluation.scoring import (
+    ScoringError,
+    ScoringProfile,
+    assemble_result,
+    load_profile,
+)
+from fixjury.evaluation.service import (
+    EvaluationError,
+    build_request,
+    default_configuration,
+)
+from fixjury.evaluation.store import store_evaluation, store_failed_evaluation
 from fixjury.judge import modes
-from fixjury.judge.evaluator import Assessment
+from fixjury.judge.evaluator import Assessment, JudgeError
+from fixjury.judge.prompts import PromptError
 from fixjury.judge.provider import ChatCompletionsProvider
+from fixjury.judge.schema import JudgeResponseError
 from fixjury.judge.store import configuration_hash, store_configuration, store_judge_run
-from fixjury.models import EvaluationRun
+from fixjury.llm import LlmError
+from fixjury.models import EvaluationRun, Run
 from fixjury.verify.policy import parse_changed_files
 
 #: Stored with every judged result. The owner approved model separation, not provider
@@ -58,6 +70,15 @@ REASONING_LIMIT = 7500
 
 class JudgeServiceError(RuntimeError):
     """The evaluation cannot be judged."""
+
+
+class FailureRecorded(JudgeServiceError):
+    """This failure already wrote its own evaluation row.
+
+    `evaluate_run` stores a failed evaluation itself when the judge answered and a later
+    step broke, because only it holds the assessments that were paid for. A caller that
+    catches the error must not write a second, empty row for the same invocation.
+    """
 
 
 @dataclass(frozen=True)
@@ -135,6 +156,20 @@ def independence_note() -> str:
     return INDEPENDENCE_NOTE + SHARED_SESSION_NOTE
 
 
+def _recorded_configuration() -> EvaluationConfiguration:
+    """The configuration to write on a failure row, even when the settings are invalid.
+
+    ``judge_configuration`` raises on a bad `FIXJURY_JUDGE_MODE`, and a recorder that called
+    it again would raise for the same reason — leaving a failed judgement unrecorded, which
+    is the state this table exists to prevent. The original error still reaches the row.
+    """
+
+    try:
+        return judge_configuration()
+    except JudgeServiceError:
+        return default_configuration()
+
+
 async def evaluate_run(
     session: AsyncSession,
     *,
@@ -156,25 +191,49 @@ async def evaluate_run(
     )
     run = await modes.run(resolved_setup, context=context, config=configuration)
     aggregation = run.aggregation
+    summaries = [assessment.summary() for assessment in run.assessments]
     if aggregation.verdict is None:
-        raise JudgeServiceError("the judge produced no assessment")
+        await store_failed_evaluation(
+            session,
+            run_id=request.run_id,
+            task_id=request.subject_ref,
+            subject_ref=request.subject_ref,
+            config=configuration,
+            error="the judge produced no assessment",
+            assessments=summaries,
+        )
+        raise FailureRecorded("the judge produced no assessment") from None
 
-    scoring_profile = profile or load_profile(
-        Path(settings.evaluation_config), name=configuration.profile
-    )
-    judged_hash = configuration_hash(setup=resolved_setup, config=configuration)
-    result = assemble_result(
-        request,
-        profile=scoring_profile,
-        judge_verdict=aggregation.verdict,
-        judge_scores=aggregation.judge_scores,
-        findings=aggregation.findings,
-        assessments=tuple(assessment.summary() for assessment in run.assessments),
-        confidence=aggregation.confidence,
-        limitations=(independence_note(),),
-        escalated=any(assessment.escalated for assessment in run.assessments),
-        reasoning_summary=_reasoning(run),
-    ).model_copy(update={"judge_config_hash": judged_hash})
+    try:
+        scoring_profile = profile or load_profile(
+            Path(settings.evaluation_config), name=configuration.profile
+        )
+        judged_hash = configuration_hash(setup=resolved_setup, config=configuration)
+        result = assemble_result(
+            request,
+            profile=scoring_profile,
+            judge_verdict=aggregation.verdict,
+            judge_scores=aggregation.judge_scores,
+            findings=aggregation.findings,
+            assessments=tuple(summaries),
+            confidence=aggregation.confidence,
+            limitations=(independence_note(),),
+            escalated=any(assessment.escalated for assessment in run.assessments),
+            reasoning_summary=_reasoning(run),
+        ).model_copy(update={"judge_config_hash": judged_hash})
+    except (ScoringError, ValueError) as exc:
+        # The judge answered and was paid for; the scoring step is what failed. Record the
+        # calls that happened so a failure row does not report a judgement as free.
+        await store_failed_evaluation(
+            session,
+            run_id=request.run_id,
+            task_id=request.subject_ref,
+            subject_ref=request.subject_ref,
+            config=configuration,
+            error=str(exc),
+            assessments=summaries,
+        )
+        raise FailureRecorded(str(exc)) from exc
     stored = await store_evaluation(session, request=request, result=result)
     configuration_row = await store_configuration(
         session, setup=resolved_setup, config=configuration
@@ -186,6 +245,33 @@ async def evaluate_run(
         run=run,
     )
     return JudgedEvaluation(evaluation=stored, result=result, assessments=run.assessments)
+
+
+async def record_failure(
+    session: AsyncSession,
+    *,
+    run_id: uuid.UUID,
+    error: str,
+    config: EvaluationConfiguration | None = None,
+) -> EvaluationRun:
+    """Store a failed evaluation so a benchmark can count it and say why.
+
+    The run keeps its own status: an evaluation that could not reach a verdict is not
+    evidence against the patch, and a benchmark that recorded it as one would report a
+    provider outage as a rejection.
+    """
+
+    run = await session.get(Run, run_id)
+    if run is None:
+        raise JudgeServiceError(f"run {run_id} does not exist")
+    return await store_failed_evaluation(
+        session,
+        run_id=run_id,
+        task_id=run.task_id,
+        subject_ref=run.task_id,
+        config=config or _recorded_configuration(),
+        error=error,
+    )
 
 
 def _reasoning(run: modes.JudgeRun) -> str:
@@ -200,15 +286,32 @@ def _reasoning(run: modes.JudgeRun) -> str:
     return "\n\n".join(part for part in parts if part.strip())[:REASONING_LIMIT]
 
 
+#: Everything a judged evaluation can raise on a corpus of mixed quality. A bench uses one
+#: tuple so a new failure mode is caught by both the command and the batch, not only one.
+JUDGE_FAILURES: tuple[type[Exception], ...] = (
+    JudgeServiceError,
+    JudgeError,
+    JudgeResponseError,
+    PromptError,
+    ScoringError,
+    EvaluationError,
+    LlmError,
+    ValueError,
+)
+
+
 __all__ = [
     "INDEPENDENCE_NOTE",
+    "JUDGE_FAILURES",
     "REASONING_LIMIT",
     "SHARED_SESSION_NOTE",
+    "FailureRecorded",
     "JudgeServiceError",
     "JudgedEvaluation",
     "evaluate_run",
     "independence_note",
     "judge_configuration",
+    "record_failure",
     "require_secure_endpoint",
     "setup_from_settings",
 ]
