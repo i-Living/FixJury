@@ -39,7 +39,11 @@ _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 
 
 class JudgeMode(StrEnum):
-    """SPEC §4.2. Default is adaptive; ``single`` has to be able to run alone."""
+    """SPEC §4.2. Default is adaptive; ``single`` has to be able to run alone.
+
+    It lives here rather than in :mod:`fixjury.models` because it is never a column type:
+    the mode travels inside the evaluation configuration, which is stored as JSON.
+    """
 
     single = "single"
     adaptive = "adaptive"
@@ -96,6 +100,9 @@ class CheckResult(BaseModel):
     summary: str = Field(default="", max_length=2000)
     artifact_ref: str | None = Field(default=None, max_length=512)
     duration_ms: int | None = Field(default=None, ge=0)
+    # Measured coverage, kept as a number so a gate or a report never has to parse the
+    # summary text. ``None`` means the check measured nothing, which is not zero.
+    coverage_percent: float | None = Field(default=None, ge=0.0, le=100.0)
 
     @model_validator(mode="after")
     def _status_agrees_with_the_exit_code(self) -> CheckResult:

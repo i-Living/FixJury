@@ -64,6 +64,7 @@ def test_a_coverage_run_reports_the_percentage_it_measured() -> None:
 
     assert result.status is CheckStatus.PASSED
     assert result.summary == "coverage 89.0%"
+    assert result.coverage_percent == 89.0
 
 
 def test_a_coverage_run_that_measured_nothing_is_an_error_not_a_pass() -> None:
@@ -72,6 +73,7 @@ def test_a_coverage_run_that_measured_nothing_is_an_error_not_a_pass() -> None:
     )
 
     assert result.status is CheckStatus.ERROR
+    assert result.coverage_percent is None
     assert "TOTAL" in result.summary
 
 

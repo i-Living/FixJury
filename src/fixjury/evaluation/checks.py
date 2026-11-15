@@ -71,6 +71,7 @@ def to_check_result(outcome: CheckOutcome) -> CheckResult:
             status=CheckStatus.PASSED,
             exit_code=outcome.exit_code,
             summary=f"coverage {percent:.1f}%",
+            coverage_percent=percent,
         )
     return CheckResult(
         name=name,
