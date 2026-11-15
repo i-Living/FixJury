@@ -33,15 +33,19 @@ the PostgreSQL enum types it created (AGENTS.md pitfall: enum types outlive thei
 
 - enums: `evaluation_source`, `evaluation_status`, `evaluation_verdict`, `finding_severity`,
   `finding_category`, `finding_source`, `judge_mode`
-- tables: `judge_configurations`, `evaluation_runs`, `evaluation_results`, `evaluation_findings`
+- tables: `evaluation_runs`, `evaluation_results`, `evaluation_findings`
 - indexes: `evaluation_runs(run_id)`, `evaluation_runs(task_id, created_at)`,
   `evaluation_findings(evaluation_run_id, severity)`
 - no column is dropped or rewritten; no historical row is touched
+- `evaluation_runs.judge_config_hash` is nullable: phase 1 records the evaluation configuration hash, phase 2
+  starts recording a named judge configuration
 
 **Revision `0004_judge_assessments`**
 
-- tables: `judge_assessments`, `judge_escalations`
+- tables: `judge_configurations`, `judge_assessments`, `judge_escalations`
 - indexes: `judge_assessments(evaluation_run_id)`, `judge_escalations(evaluation_run_id)`
+- `judge_configurations` is created here rather than with the evaluation tables: an empty table nothing writes
+  is not a migration, it is a placeholder for a later phase
 
 `verdicts` gains **nothing**: `human_*` / `reviewer_*` keep their V1 meaning. A machine verdict lives in
 `evaluation_results`, which is what makes decisions 1 and 6 additive rather than destructive.
