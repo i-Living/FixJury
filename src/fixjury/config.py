@@ -46,5 +46,10 @@ class Settings(BaseSettings):
     # cross-version comparison instead of pretending they were priced.
     pricing_version: str = "unpriced"
 
+    # Evaluation profiles: weights are configuration, and the profile version travels
+    # with every result so two scores are never compared across versions by accident.
+    evaluation_config: str = "config/evaluation.yaml"
+    evaluation_profile: str = "default"
+
 
 settings = Settings()
