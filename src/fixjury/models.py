@@ -321,6 +321,10 @@ class EvaluationRun(Base):
     config_hash: Mapped[str] = mapped_column(String(64))
     scoring_profile: Mapped[str] = mapped_column(String(64))
     scoring_version: Mapped[str] = mapped_column(String(32))
+    # What each judge said, as it said it. Phase 2 normalises assessments into
+    # `judge_assessments`; the raw record stays here so a stored result never loses the
+    # answer it was derived from.
+    assessments: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
     # Nullable until a judge configuration exists: phase 1 records what the evaluation
     # was configured with, phase 2 records which judge produced the assessment.
     judge_config_hash: Mapped[str | None] = mapped_column(String(64))

@@ -74,6 +74,9 @@ TOOL_VERSION_COMMANDS = (
     ("pytest", ["pytest", "--version"]),
     ("ruff", ["ruff", "--version"]),
     ("mypy", ["mypy", "--version"]),
+    # Coverage is a check too: a verdict that measured coverage under an unrecorded
+    # version is history nobody can reproduce.
+    ("coverage", ["coverage", "--version"]),
 )
 
 

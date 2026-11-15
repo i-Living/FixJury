@@ -278,7 +278,12 @@ class EvaluationContext(BaseModel):
             None,
         )
         if heldout_passed is None and heldout is not None:
-            heldout_passed = heldout.status is CheckStatus.PASSED
+            # Only a definitive outcome is an outcome: a suite that could not run or was
+            # skipped leaves the answer unknown rather than reporting a failure.
+            if heldout.status is CheckStatus.PASSED:
+                heldout_passed = True
+            elif heldout.status is CheckStatus.FAILED:
+                heldout_passed = False
         return cls(
             subject_ref=request.subject_ref,
             spec_text=request.spec_text,

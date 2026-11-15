@@ -54,6 +54,12 @@ def upgrade() -> None:
         sa.Column("config_hash", sa.String(length=64), nullable=False),
         sa.Column("scoring_profile", sa.String(length=64), nullable=False),
         sa.Column("scoring_version", sa.String(length=32), nullable=False),
+        sa.Column(
+            "assessments",
+            postgresql.JSONB(astext_type=sa.Text()),
+            server_default=sa.text("'[]'::jsonb"),
+            nullable=False,
+        ),
         sa.Column("judge_config_hash", sa.String(length=64), nullable=True),
         sa.Column(
             "status",

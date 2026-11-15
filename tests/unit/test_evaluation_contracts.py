@@ -197,6 +197,20 @@ def test_the_judge_context_reduces_the_held_out_suite_to_its_outcome() -> None:
     assert "user_cannot_see_other_tenants" not in context.model_dump_json()
 
 
+def test_a_held_out_suite_that_could_not_run_leaves_the_outcome_unknown() -> None:
+    heldout = CheckResult(
+        name="held-out",
+        tool=CheckTool.pytest,
+        status=CheckStatus.ERROR,
+        exit_code=3,
+        summary="INTERNALERROR> the collection crashed",
+    )
+
+    context = EvaluationContext.from_request(request(checks=(heldout,)))
+
+    assert context.heldout_passed is None
+
+
 def test_an_assessment_summary_keeps_the_prompt_version() -> None:
     summary = AssessmentSummary(
         judge_id="primary",

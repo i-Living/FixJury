@@ -7,6 +7,7 @@ never touches a container, which is what makes re-evaluating an old run cheap an
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import uuid
 from pathlib import Path
@@ -65,7 +66,9 @@ async def build_request(
         raise EvaluationError(f"run {run_id} has no verdict; verify it before evaluating it")
 
     try:
-        document = read_task(task_path(corpus_root, run.task_id))
+        # YAML parsing is CPU work on a file this process may not own; the event loop has
+        # other runs to serve.
+        document = await asyncio.to_thread(read_task, task_path(corpus_root, run.task_id))
     except (TaskFileError, OSError) as exc:
         raise EvaluationError(f"task {run.task_id} cannot be read: {exc}") from exc
     if not document.base_commit:

@@ -274,6 +274,9 @@ def test_a_judged_evaluation_stores_its_verdict_findings_and_usage() -> None:
     assert stored.tokens_out == 300
     assert stored.cost_list_usd == Decimal("0.0042")
     assert result_rows == 1
+    # The assessment survives the round trip: the stored result must not lose which judge
+    # produced it, under which prompt.
+    assert result.assessments == (judge_assessment(),)
 
 
 def test_a_failed_check_is_stored_as_a_confirmed_finding() -> None:

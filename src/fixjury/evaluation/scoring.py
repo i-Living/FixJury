@@ -141,7 +141,8 @@ def _automated_score(
     """The score a check set proves, or ``None`` when it proves nothing.
 
     ``ERROR`` yields no score on purpose: the check could not run, so the patch is not
-    worse, it is unmeasured.
+    worse, it is unmeasured. ``SKIPPED`` is ignored for the same reason — a check nobody
+    ran is not a check that passed.
     """
 
     evidence = _relevant(checks, criterion)
@@ -149,7 +150,10 @@ def _automated_score(
         return None
     if any(check.status is CheckStatus.ERROR for check in evidence):
         return None
-    if any(check.status is CheckStatus.FAILED for check in evidence):
+    decisive = [check for check in evidence if check.status is not CheckStatus.SKIPPED]
+    if not decisive:
+        return None
+    if any(check.status is CheckStatus.FAILED for check in decisive):
         return 0.0, "a required check failed"
     return 100.0, "every required check passed"
 
@@ -213,7 +217,11 @@ def score(
 
 
 def _check_finding(check: CheckResult) -> EvaluationFinding:
-    criterion = CHECK_CRITERIA[check.tool]
+    # A failed held-out suite is a regression, not a wrong fix: the task's own tests said
+    # the patch works, and the post-fix tests say it broke something else.
+    criterion = (
+        Criterion.regression_safety if check.name == HELDOUT_NAME else CHECK_CRITERIA[check.tool]
+    )
     return EvaluationFinding(
         severity=FindingSeverity.critical,
         category=criterion,
@@ -343,6 +351,13 @@ def assemble_result(
 
     checks = request.checks
     judge_scores = judge_scores or {}
+    if profile.name != request.config.profile:
+        # The stored result names the profile it was scored with and the hash of the
+        # configuration it ran under. If those two disagree, one of them is a lie.
+        raise ScoringError(
+            f"profile {profile.name!r} does not match the configured profile "
+            f"{request.config.profile!r}"
+        )
     score_value = score(profile=profile, checks=checks, judge_scores=judge_scores)
     verdict, reasons = decide_verdict(
         judge_verdict=judge_verdict,
@@ -360,9 +375,14 @@ def assemble_result(
         policy_pass=request.policy_pass,
         policy_violations=request.policy_violations,
     )
-    seen = {finding.evidence_ref for finding in findings}
+    seen = {(finding.evidence_ref, finding.source) for finding in findings}
     merged = list(findings)
-    merged.extend(failure for failure in failures if failure.evidence_ref not in seen)
+    # Dedupe only against an automated finding that is already there: a judge finding can
+    # cite the same check, and letting it stand in for the confirmed one would hide the
+    # failure the check proved.
+    merged.extend(
+        failure for failure in failures if (failure.evidence_ref, failure.source) not in seen
+    )
     return EvaluationResult(
         verdict=verdict,
         judge_verdict=judge_verdict,

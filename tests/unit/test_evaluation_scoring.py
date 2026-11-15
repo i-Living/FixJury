@@ -265,3 +265,59 @@ def test_an_evidenced_judge_finding_is_kept_next_to_the_automated_ones() -> None
 
     assert result.verdict is EvaluationVerdict.REJECTED
     assert result.findings == (finding,)
+
+
+def test_a_skipped_check_is_not_a_passing_check() -> None:
+    value = score(
+        profile=profile(),
+        checks=(check(status=CheckStatus.SKIPPED), heldout()),
+        judge_scores={},
+    )
+    correctness = next(item for item in value.criteria if item.criterion is Criterion.correctness)
+
+    assert correctness.score == 0.0
+    assert correctness.rationale == "no automated evidence"
+
+
+def test_a_failed_held_out_suite_is_a_regression_finding() -> None:
+    failures = critical_failures(checks=(heldout(CheckStatus.FAILED),))
+
+    assert len(failures) == 1
+    assert failures[0].category is Criterion.regression_safety
+
+
+def test_a_profile_that_contradicts_the_configuration_is_refused() -> None:
+    with pytest.raises(ScoringError, match="does not match the configured profile"):
+        assemble_result(
+            request((check(), heldout())),
+            profile=ScoringProfile(name="other", version="1", weights=dict(DEFAULT_WEIGHTS)),
+            judge_verdict=EvaluationVerdict.ACCEPTED,
+            judge_scores=every_criterion(90.0),
+            confidence=0.9,
+        )
+
+
+def test_a_judge_finding_cannot_stand_in_for_the_failure_a_check_proved() -> None:
+    judge_finding = EvaluationFinding(
+        severity=FindingSeverity.major,
+        category=Criterion.correctness,
+        description="the failing test looks unrelated to the change",
+        evidence_ref="check:pytest tests",
+        impact="the patch may still be acceptable",
+        source=FindingSource.judge,
+    )
+
+    result = assemble_result(
+        request((check(status=CheckStatus.FAILED, exit_code=1), heldout())),
+        profile=profile(),
+        judge_verdict=EvaluationVerdict.REJECTED,
+        judge_scores=every_criterion(50.0),
+        findings=(judge_finding,),
+        confidence=0.9,
+    )
+
+    assert result.verdict is EvaluationVerdict.REJECTED
+    assert any(
+        finding.confirmed and finding.evidence_ref == "check:pytest tests"
+        for finding in result.findings
+    )

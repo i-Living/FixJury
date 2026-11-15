@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fixjury.config import settings
 from fixjury.evaluation.contracts import (
+    AssessmentSummary,
     CriterionScore,
     EvaluationFinding,
     EvaluationRequest,
@@ -93,6 +94,7 @@ async def store_evaluation(
         config_hash=result.config_hash,
         scoring_profile=result.score.profile,
         scoring_version=result.score.profile_version,
+        assessments=[assessment.model_dump(mode="json") for assessment in result.assessments],
         judge_config_hash=result.judge_config_hash,
         status=EvaluationStatus.finished,
         tokens_in=tokens_in,
@@ -168,7 +170,7 @@ def result_from_rows(
             )
             for finding in findings
         ),
-        assessments=(),
+        assessments=tuple(AssessmentSummary.model_validate(item) for item in run.assessments),
         limitations=tuple(row.limitations),
         escalated=row.escalated,
         reasoning_summary=row.reasoning_summary,

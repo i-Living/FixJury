@@ -11,9 +11,9 @@ from fixjury.verify.verdict import CheckOutcome
 COVERAGE_REPORT = """Name                 Stmts   Miss Branch BrPart  Cover
 -------------------------------------------------------
 app/__init__.py          4      0      0      0   100%
-app/service.py          52      6     10      1    88%
+app/service.py          52      6     10      1  87.32%
 -------------------------------------------------------
-TOTAL                   56      6     10      1    89%
+TOTAL                   56      6     10      1  87.32%
 """
 
 COVERAGE_REPORT_WITHOUT_BRANCHES = """Name                 Stmts   Miss  Cover
@@ -35,7 +35,7 @@ def outcome(
 
 
 def test_coverage_percent_reads_the_total_row() -> None:
-    assert coverage_percent(COVERAGE_REPORT) == 89.0
+    assert coverage_percent(COVERAGE_REPORT) == 87.32
     assert coverage_percent(COVERAGE_REPORT_WITHOUT_BRANCHES) == 89.0
 
 
@@ -57,14 +57,22 @@ def test_a_failing_check_is_failed_even_when_it_printed_a_summary() -> None:
     assert result.status is CheckStatus.FAILED
 
 
-def test_a_coverage_run_reports_the_percentage_it_measured() -> None:
+def test_a_pytest_internal_error_is_not_a_test_failure() -> None:
+    """Exit 3 is pytest admitting it could not run; the patch is unmeasured, not wrong."""
+
+    result = to_check_result(outcome(exit_code=3, output="INTERNALERROR> Traceback …"))
+
+    assert result.status is CheckStatus.ERROR
+
+
+def test_a_coverage_report_reports_the_percentage_it_measured() -> None:
     result = to_check_result(
         outcome(command="coverage report", tool=CheckTool.coverage, output=COVERAGE_REPORT)
     )
 
     assert result.status is CheckStatus.PASSED
-    assert result.summary == "coverage 89.0%"
-    assert result.coverage_percent == 89.0
+    assert result.summary == "coverage 87.3%"
+    assert result.coverage_percent == 87.32
 
 
 def test_a_coverage_run_that_measured_nothing_is_an_error_not_a_pass() -> None:
@@ -75,6 +83,50 @@ def test_a_coverage_run_that_measured_nothing_is_an_error_not_a_pass() -> None:
     assert result.status is CheckStatus.ERROR
     assert result.coverage_percent is None
     assert "TOTAL" in result.summary
+
+
+def test_an_empty_coverage_report_that_exits_nonzero_is_an_error_too() -> None:
+    """`coverage report` exits 1 when there is no data: nothing was measured."""
+
+    result = to_check_result(
+        outcome(
+            command="coverage report",
+            tool=CheckTool.coverage,
+            exit_code=1,
+            output="No data to report.",
+        )
+    )
+
+    assert result.status is CheckStatus.ERROR
+
+
+def test_a_successful_coverage_run_is_the_measurement_not_the_reading() -> None:
+    """`coverage run -m pytest` prints the test run, not a TOTAL table."""
+
+    result = to_check_result(
+        outcome(
+            command="coverage run -m pytest tests",
+            tool=CheckTool.coverage,
+            output="4 passed in 1.20s",
+        )
+    )
+
+    assert result.status is CheckStatus.PASSED
+    assert result.coverage_percent is None
+    assert result.summary == "4 passed in 1.20s"
+
+
+def test_a_failed_coverage_run_is_a_failed_check() -> None:
+    result = to_check_result(
+        outcome(
+            command="coverage run -m pytest tests",
+            tool=CheckTool.coverage,
+            exit_code=1,
+            output="1 failed",
+        )
+    )
+
+    assert result.status is CheckStatus.FAILED
 
 
 def test_the_held_out_suite_is_named_for_what_it_is() -> None:
