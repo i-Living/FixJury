@@ -27,15 +27,15 @@ FixJury is not another coding agent. It runs existing agents as interchangeable 
 
 | Metric | Definition |
 | --- | --- |
-| `human_acceptance_rate` | Share of task–agent pairs whose patch a blind human reviewer accepted. |
+| `acceptance_rate` | Share of decided task–agent pairs whose patch was accepted. The verdict source is named in every table: the AI Judge by default, or a blind human reviewer (the V1 series). |
 | `regression_free_acceptance_rate` | Share of task–agent pairs accepted **and** free of detected regressions and out-of-scope changes. |
 | `tokens_per_accepted_fix` | Total tokens across all runs (including retries and rejections) divided by accepted fixes — the primary, tariff-independent metric. |
 | `cost_per_accepted_fix` | Same denominator, in money: reported on two bases (reference list price for the tokens, and the amortized share of the flat subscription); every table states its basis. `null` when nothing was accepted. |
 | `task_success_rate` | Share of task–agent pairs passing every automated check (tests, lint, types, policy, held-out tests). |
 | `median_time_to_repair` | Median wall-clock time of accepted runs. |
-| `false_completion_rate` | Share of runs where the agent declared success but the patch failed checks or human review. |
+| `false_completion_rate` | Share of runs where the agent declared success but the patch failed checks or the verdict. |
 
-Automated success and human acceptance are reported separately, because passing tests is not the same as solving the task. Cost has two bases — reference list price for the tokens, and the amortized share of the flat subscription — and every table states which one it shows. Full formulas, denominators and exclusion rules: [`docs/PLAN.md` §3](docs/PLAN.md).
+Automated success and acceptance are reported separately, because passing tests is not the same as solving the task. Cost has two bases — reference list price for the tokens, and the amortized share of the flat subscription — and every table states which one it shows. Full formulas, denominators and exclusion rules: [`docs/PLAN.md` §3](docs/PLAN.md).
 
 ## How it works
 

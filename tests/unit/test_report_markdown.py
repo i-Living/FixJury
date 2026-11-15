@@ -43,7 +43,10 @@ PAYLOAD: dict[str, object] = {
 def test_the_table_row_carries_every_headline_number() -> None:
     row = render_agent_table(PAYLOAD)
 
-    assert row.startswith("| baseline | 40.0% | 16.8-68.7% | 30.0% | 60.0% | 4/10 |")
+    # A payload written before V1.1 has no verdict_source: it is a human series.
+    assert row.startswith(
+        "| baseline | human (V1 snapshot) | 40.0% | 16.8-68.7% | 30.0% | 60.0% | 4/10 |"
+    )
     assert "1250.00" in row
     assert "0.4000" in row
     assert "42.50 s" in row
@@ -68,7 +71,7 @@ def test_an_unreviewed_corpus_reports_null_acceptance() -> None:
 
     row = render_agent_table(payload)
 
-    assert row.startswith("| baseline | null | null | null | 60.0% | 0/0 |")
+    assert row.startswith("| baseline | human (V1 snapshot) | null | null | null | 60.0% | 0/0 |")
     assert "0.0%" not in row.split("|")[2]
 
 
@@ -93,7 +96,7 @@ def test_the_report_labels_the_cost_basis() -> None:
 
     assert "list price" in text
     assert "not an invoice" in text
-    assert "| Agent | Acceptance | 95% CI |" in text
+    assert "| Agent | Verdict source | Acceptance | 95% CI |" in text
 
 
 def test_the_report_shows_exclusions_and_pricing_version() -> None:
@@ -123,3 +126,49 @@ def test_decimal_values_are_formatted_not_printed_raw() -> None:
     payload["metrics"] = {**METRICS, "cost_per_accepted_fix": Decimal("0.4")}
 
     assert "0.40" in render_agent_table(payload)
+
+
+def test_judge_usage_is_reported_beside_the_agent_totals() -> None:
+    """A judge bill has to be visible, or "cost per accepted fix" hides half of what was spent."""
+
+    payload: dict[str, object] = {
+        **PAYLOAD,
+        "verdict_source": "judge",
+        "judge": {
+            "evaluations": 2,
+            "escalated": 1,
+            "tokens_total": 2000,
+            "cost_total": "0.2500",
+            "pricing_versions": ["unpriced-2026-11"],
+        },
+    }
+
+    text = render_report([payload])
+
+    assert "## Judge usage" in text
+    assert "| baseline | 2 | 1 | 2000 | 0.2500 | unpriced-2026-11 |" in text
+    assert "5000" in text, "the agent's own tokens stay in their own column"
+
+
+def test_an_amortized_report_says_the_judge_cost_is_still_a_list_price() -> None:
+    """The two bases answer different questions; a table cannot lend its label to the other."""
+
+    payload: dict[str, object] = {
+        **PAYLOAD,
+        "cost_basis": "amortized",
+        "verdict_source": "judge",
+        "judge": {
+            "evaluations": 1,
+            "escalated": 0,
+            "tokens_total": 100,
+            "cost_total": "0.0100",
+            "pricing_versions": ["v"],
+        },
+    }
+
+    text = render_report([payload], basis="amortized")
+
+    assert "amortized" in text
+    assert "Judge cost (list price)" in text
+    assert "Agent cost (selected basis)" in text
+    assert "The judge's cost is always a list-price reference" in text

@@ -17,17 +17,21 @@ accepted fix, and where the corpus ends up — from the rows in `metric_snapshot
   "generated_at": "2026-11-13 09:00 UTC",
   "agents": [
     { "agent": "baseline", "cost_basis": "…", "pricing_version": "…",
-      "denominators": { "pairs": 6, "accepted": 4, "…": 0 },
+      "verdict_source": "judge",
+      "denominators": { "pairs": 6, "decided_pairs": 6, "accepted": 4, "…": 0 },
       "exclusions": { "infra_failed": 2 },
-      "metrics": { "human_acceptance_rate": 0.667, "human_acceptance_ci": { "low": 0.268, "high": 0.925 }, "…": null },
-      "split": { "regression_free": 0.5, "with_regression": 0.167, "not_accepted": 0.333 } }
+      "metrics": { "acceptance_rate": 0.667, "acceptance_ci": { "low": 0.268, "high": 0.925 }, "…": null },
+      "split": { "regression_free": 0.5, "with_regression": 0.167, "not_accepted": 0.333 },
+      "calibration": { "labeled_pairs": 6, "false_acceptance": { "count": 0, "of": 2, "rate": 0.0 }, "…": null } }
   ]
 }
 ```
 
-`split` is the only derived block, and it comes from `fixjury.report.charts.corpus_split`, the same
-function the matplotlib charts stack their bars with. Percentages are a ×100 for display; nothing else
-is arithmetic. A zero denominator arrives as `null` and renders as the word `null`, never as `0`.
+Every block above is computed once, in `src/fixjury/metrics/`, and stored with the snapshot; the page
+only formats. A snapshot written before V1.1 has no `verdict_source` and no `calibration`, and
+`web/lib/data.ts` maps its `human_acceptance_rate` / `reviewed_pairs` onto the current names — a
+payload without the field is, by definition, the human series. A zero denominator arrives as `null`
+and renders as the word `null`, never as `0`.
 
 ## Commands
 

@@ -15,6 +15,7 @@ from sqlalchemy.pool import NullPool
 from fixjury.api.app import create_app
 from fixjury.config import settings
 from fixjury.db import make_engine, session_scope
+from fixjury.metrics.compute import VerdictSource
 from fixjury.metrics.service import compute_snapshot
 from fixjury.models import (
     HumanVerdict,
@@ -290,7 +291,9 @@ def test_a_snapshot_is_served_exactly_as_it_was_stored(client: TestClient) -> No
 
         async def store() -> tuple[uuid.UUID, dict[str, object]]:
             async with session_scope(maker) as session:
-                snapshot = await compute_snapshot(session, agent=AGENTS[0])
+                snapshot = await compute_snapshot(
+                    session, agent=AGENTS[0], verdict_source=VerdictSource.human
+                )
                 return snapshot.id, dict(snapshot.payload)
 
         identifier, stored = asyncio.run(store())
