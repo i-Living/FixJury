@@ -24,7 +24,7 @@ from fixjury.sandbox.tools import ToolError
 from fixjury.tasks.loader import read_task, task_path
 from fixjury.verify.policy import Violation, check_policy
 from fixjury.verify.runner import VerificationError, verify_workspace
-from fixjury.verify.verdict import VerificationResult, assemble
+from fixjury.verify.verdict import VerificationResult, assemble, stored_outcomes
 
 LOGGER = logging.getLogger(__name__)
 HELDOUT_DIRNAME = "heldout"
@@ -156,6 +156,10 @@ async def store_verdict(
         heldout_pass=result.heldout_pass,
         automated_pass=result.automated_pass,
         tool_versions=dict(result.tool_versions),
+        # The evidence a judge has to cite, stored with the verdict it belongs to: it
+        # cannot be rebuilt from five booleans, and re-running verification to recover
+        # it would spend sandbox minutes on a decision already taken.
+        check_results=stored_outcomes(result.outcomes),
     )
     session.add(verdict)
     for violation in result.rejections:

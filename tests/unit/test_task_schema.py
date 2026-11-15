@@ -145,4 +145,47 @@ def test_parse_check_splits_tool_and_paths() -> None:
     command = parse_check("ruff check src tests")
 
     assert command.tool is CheckTool.ruff
+    assert command.prefix == ("check",)
     assert command.args == ("src", "tests")
+
+
+@pytest.mark.parametrize(
+    ("raw", "prefix", "paths"),
+    [
+        ("coverage run -m pytest tests", ("run", "-m", "pytest"), ("tests",)),
+        (
+            "coverage run -m pytest tests/unit tests/integration",
+            ("run", "-m", "pytest"),
+            ("tests/unit", "tests/integration"),
+        ),
+        ("coverage report", ("report",), ()),
+    ],
+)
+def test_parse_check_accepts_the_two_coverage_shapes(
+    raw: str, prefix: tuple[str, ...], paths: tuple[str, ...]
+) -> None:
+    command = parse_check(raw)
+
+    assert command.tool is CheckTool.coverage
+    assert command.prefix == prefix
+    assert command.args == paths
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "coverage",
+        "coverage html",
+        "coverage xml",
+        "coverage run pytest tests",
+        "coverage run -m unittest tests",
+        "coverage run -m pytest",
+        "coverage report --show-missing",
+        "coverage run -m pytest tests --rcfile=/etc/passwd",
+        "coverage run -m pytest /etc/passwd",
+        "coverage run -m pytest ../outside",
+    ],
+)
+def test_parse_check_refuses_a_coverage_command_it_cannot_pin(raw: str) -> None:
+    with pytest.raises(ValueError, match="coverage"):
+        parse_check(raw)

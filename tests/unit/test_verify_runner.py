@@ -171,6 +171,8 @@ def test_a_bundle_missing_its_file_is_refused(tmp_path: Path) -> None:
         ("pytest tests/test_api.py", ["pytest", "tests/test_api.py"]),
         ("ruff check src tests", ["ruff", "check", "src", "tests"]),
         ("mypy src", ["mypy", "src"]),
+        ("coverage run -m pytest tests", ["coverage", "run", "-m", "pytest", "tests"]),
+        ("coverage report", ["coverage", "report"]),
     ],
 )
 def test_check_commands_become_argv(command: str, expected: list[str]) -> None:

@@ -91,6 +91,58 @@ class RejectionCode(StrEnum):
     TIMEOUT_LIMIT = "TIMEOUT_LIMIT"
 
 
+class EvaluationSource(StrEnum):
+    """Which product asked for an evaluation.
+
+    ``review`` is the reserved value for GitHub Review: the column exists so a pull
+    request evaluation can be stored later without rewriting rows, and nothing writes
+    it until that phase ships.
+    """
+
+    benchmark = "benchmark"
+    review = "review"
+
+
+class EvaluationStatus(StrEnum):
+    running = "running"
+    finished = "finished"
+    failed = "failed"
+
+
+class EvaluationVerdict(StrEnum):
+    """SPEC §4.5. Member names are the stored values, uppercase as the spec spells them."""
+
+    ACCEPTED = "ACCEPTED"
+    REJECTED = "REJECTED"
+    INCONCLUSIVE = "INCONCLUSIVE"
+
+
+class Criterion(StrEnum):
+    """The scoring vocabulary (SPEC §5). Weights live in the evaluation profile."""
+
+    correctness = "correctness"
+    regression_safety = "regression_safety"
+    code_quality = "code_quality"
+    maintainability = "maintainability"
+    security = "security"
+    minimality = "minimality"
+    requirement_compliance = "requirement_compliance"
+
+
+class FindingSeverity(StrEnum):
+    info = "info"
+    minor = "minor"
+    major = "major"
+    critical = "critical"
+
+
+class FindingSource(StrEnum):
+    """``automated`` findings are confirmed by a check; ``judge`` findings are opinions."""
+
+    automated = "automated"
+    judge = "judge"
+
+
 # A run can only be read as an exclusion if the reason fits the column it is stored
 # in: an adapter builds it from a git message, and PostgreSQL rejects the overflow.
 UNABLE_REASON_LENGTH = 120
@@ -173,6 +225,10 @@ class Verdict(Base):
     heldout_pass: Mapped[bool | None]
     automated_pass: Mapped[bool] = mapped_column(default=False)
     tool_versions: Mapped[dict[str, str]] = mapped_column(JSONB, default=dict)
+    # Structured evidence from the verification container: the command, the tool, the
+    # exit code and the output tail of every check. Five booleans cannot be cited by a
+    # judge, and re-running verification to recover them would spend sandbox minutes.
+    check_results: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
     reviewer_verdict: Mapped[ReviewerVerdict | None] = mapped_column(
         SAEnum(ReviewerVerdict, name="reviewer_verdict")
     )
@@ -231,3 +287,97 @@ class MetricSnapshot(Base):
     cost_basis: Mapped[CostBasis] = mapped_column(SAEnum(CostBasis, name="cost_basis"))
     config_hash: Mapped[str] = mapped_column(String(64))
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
+
+
+# One enum instance per column pair: SQLAlchemy would otherwise emit CREATE TYPE twice
+# for `evaluation_results`, where the judge's own verdict sits next to the final one.
+EVIDENCE_VERDICT = SAEnum(EvaluationVerdict, name="evaluation_verdict")
+
+
+class EvaluationRun(Base):
+    """One evaluation of one subject (PLAN_V1.1 §1.4)."""
+
+    __tablename__ = "evaluation_runs"
+    __table_args__ = (
+        Index("ix_evaluation_runs_run", "run_id"),
+        Index("ix_evaluation_runs_subject", "source", "subject_ref", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    source: Mapped[EvaluationSource] = mapped_column(
+        SAEnum(EvaluationSource, name="evaluation_source"), default=EvaluationSource.benchmark
+    )
+    # The subject's id in its own domain: a task id for the benchmark, a pull request
+    # reference once GitHub Review lands. `task_id` and `run_id` are the benchmark's
+    # joins and stay empty for any other source.
+    subject_ref: Mapped[str] = mapped_column(String(256))
+    task_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("tasks.id", ondelete="CASCADE")
+    )
+    run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("runs.id", ondelete="CASCADE")
+    )
+    config: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    config_hash: Mapped[str] = mapped_column(String(64))
+    scoring_profile: Mapped[str] = mapped_column(String(64))
+    scoring_version: Mapped[str] = mapped_column(String(32))
+    # Nullable until a judge configuration exists: phase 1 records what the evaluation
+    # was configured with, phase 2 records which judge produced the assessment.
+    judge_config_hash: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[EvaluationStatus] = mapped_column(
+        SAEnum(EvaluationStatus, name="evaluation_status"), default=EvaluationStatus.running
+    )
+    tokens_in: Mapped[int] = mapped_column(Integer, default=0)
+    tokens_out: Mapped[int] = mapped_column(Integer, default=0)
+    cost_list_usd: Mapped[Decimal] = mapped_column(Numeric(10, 4), default=Decimal("0"))
+    pricing_version: Mapped[str] = mapped_column(String(32))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class EvaluationResult(Base):
+    """The verdict and the score of one evaluation; one row per evaluation."""
+
+    __tablename__ = "evaluation_results"
+
+    evaluation_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("evaluation_runs.id", ondelete="CASCADE"), primary_key=True
+    )
+    verdict: Mapped[EvaluationVerdict] = mapped_column(EVIDENCE_VERDICT)
+    # What the judge said before the critical-failure rules were applied. Keeping both
+    # makes an override auditable instead of invisible.
+    judge_verdict: Mapped[EvaluationVerdict | None] = mapped_column(EVIDENCE_VERDICT)
+    overall_score: Mapped[Decimal] = mapped_column(Numeric(5, 2))
+    confidence: Mapped[Decimal] = mapped_column(Numeric(4, 3))
+    criteria: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    reasoning_summary: Mapped[str] = mapped_column(Text, default="")
+    limitations: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
+    escalated: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class EvaluationFinding(Base):
+    """One finding: a confirmed check failure or a judge opinion with its evidence."""
+
+    __tablename__ = "evaluation_findings"
+    __table_args__ = (
+        Index("ix_evaluation_findings_run_severity", "evaluation_run_id", "severity"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    evaluation_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("evaluation_runs.id", ondelete="CASCADE")
+    )
+    severity: Mapped[FindingSeverity] = mapped_column(
+        SAEnum(FindingSeverity, name="finding_severity")
+    )
+    category: Mapped[Criterion] = mapped_column(SAEnum(Criterion, name="criterion"))
+    source: Mapped[FindingSource] = mapped_column(SAEnum(FindingSource, name="finding_source"))
+    # True only for a finding a check proved. A judge finding is never confirmed.
+    confirmed: Mapped[bool] = mapped_column(default=False)
+    description: Mapped[str] = mapped_column(Text)
+    evidence_ref: Mapped[str] = mapped_column(String(256))
+    path: Mapped[str | None] = mapped_column(String(512))
+    line: Mapped[int | None] = mapped_column(Integer)
+    impact: Mapped[str] = mapped_column(Text)

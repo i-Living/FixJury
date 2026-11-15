@@ -3,7 +3,12 @@ from __future__ import annotations
 from fixjury.models import RejectionCode
 from fixjury.tasks.schema import CheckTool
 from fixjury.verify.policy import PolicyResult, Violation
-from fixjury.verify.verdict import CheckOutcome, assemble
+from fixjury.verify.verdict import (
+    CheckOutcome,
+    assemble,
+    outcomes_from_stored,
+    stored_outcomes,
+)
 
 PASSING_POLICY = PolicyResult(passed=True, violations=(), files=())
 
@@ -131,3 +136,39 @@ def test_the_verdict_carries_the_raw_outcomes() -> None:
     result = assemble(outcomes, policy=PASSING_POLICY, heldout_pass=True, tool_versions={})
 
     assert result.outcomes == outcomes
+
+
+def test_stored_outcomes_round_trip() -> None:
+    outcomes = (
+        CheckOutcome(command="pytest tests", tool=CheckTool.pytest, exit_code=0, output="4 passed"),
+        CheckOutcome(
+            command="ruff check src", tool=CheckTool.ruff, exit_code=1, output="E501 line too long"
+        ),
+        CheckOutcome(
+            command="pytest tests_heldout",
+            tool=CheckTool.pytest,
+            exit_code=1,
+            output="",
+            heldout=True,
+        ),
+    )
+
+    assert outcomes_from_stored(stored_outcomes(outcomes)) == outcomes
+
+
+def test_a_stored_row_this_module_cannot_read_is_skipped() -> None:
+    """A missing check is visible as missing evidence; a fabricated one is invisible."""
+
+    restored = outcomes_from_stored(
+        [
+            {"command": "pytest tests", "tool": "pytest", "exit_code": 0},
+            {"command": "pytest tests", "tool": "not-a-tool", "exit_code": 0},
+            {"command": "", "tool": "pytest", "exit_code": 0},
+            {"command": "pytest tests", "tool": "pytest", "exit_code": "zero"},
+            {"command": "mypy src", "tool": "mypy", "exit_code": True},
+            "not a row",
+        ]
+    )
+
+    assert len(restored) == 1
+    assert restored[0].command == "pytest tests"

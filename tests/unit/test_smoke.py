@@ -11,7 +11,7 @@ def test_settings_use_env_prefix() -> None:
     assert Settings.model_config["env_prefix"] == "FIXJURY_"
 
 
-def test_models_declare_six_tables() -> None:
+def test_models_declare_their_tables() -> None:
     assert set(Base.metadata.tables) == {
         "tasks",
         "runs",
@@ -19,6 +19,10 @@ def test_models_declare_six_tables() -> None:
         "rejections",
         "review_batches",
         "metric_snapshots",
+        # V1.1 evaluation core: the machine verdict lives beside the V1 human record.
+        "evaluation_runs",
+        "evaluation_results",
+        "evaluation_findings",
     }
 
 
