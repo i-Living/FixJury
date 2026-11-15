@@ -340,6 +340,22 @@ def _gate_verdict(result: EvaluationResult) -> GateResult:
     return GateResult(rule="verdict", outcome=GateOutcome.PASS, detail=result.verdict.value)
 
 
+def _gate_policy(request: EvaluationRequest) -> GateResult:
+    """The task's path policy, read from the request the gate built now.
+
+    It is checked here rather than trusted from the stored result: `allowed_paths` and
+    `forbidden` come from the task file, and a stored PASS from an earlier task version is not
+    evidence about the policy in force.
+    """
+
+    if request.policy_pass:
+        return GateResult(
+            rule="policy", outcome=GateOutcome.PASS, detail="inside the allowed paths"
+        )
+    violations = "; ".join(request.policy_violations) or "the diff leaves the paths the task allows"
+    return GateResult(rule="policy", outcome=GateOutcome.FAIL, detail=violations, confirmed=True)
+
+
 def _gate_size(
     policy: GatePolicy, request: EvaluationRequest, changed: Sequence[ChangedFile]
 ) -> GateResult:
@@ -490,6 +506,7 @@ def evaluate_gates(
     results = [
         _gate_verdict(result),
         *_gate_checks(policy, request.checks, result),
+        _gate_policy(request),
         _gate_score(policy, result),
         _gate_security(policy, result),
         _gate_size(policy, request, changed),

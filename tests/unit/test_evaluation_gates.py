@@ -71,6 +71,8 @@ def request(
     checks: tuple[CheckResult, ...] = (),
     mode: str = "adaptive",
     diff: str = DIFF,
+    policy_pass: bool = True,
+    policy_violations: tuple[str, ...] = (),
 ) -> EvaluationRequest:
     return EvaluationRequest(
         subject_ref="T-001",
@@ -80,6 +82,8 @@ def request(
         diff_sha256=sha_of(diff),
         spec_text="# Task T-001",
         checks=checks,
+        policy_pass=policy_pass,
+        policy_violations=policy_violations,
         config=EvaluationConfiguration(mode=mode),  # type: ignore[arg-type]
     )
 
@@ -559,3 +563,23 @@ def test_a_policy_with_a_yaml_anchor_loads(tmp_path: Path) -> None:
 
     assert policy_from_file.min_score == 80.0
     assert policy_from_file.required_tools == (CheckTool.pytest,)
+
+
+def test_a_path_policy_violation_is_a_confirmed_failure() -> None:
+    """The gate reads the policy in force, not a stored PASS from an earlier task version."""
+
+    documented_request = request(
+        policy_pass=False, policy_violations=("EXTRA_FILES: src/secret.py",)
+    )
+
+    report = evaluate_gates(
+        GatePolicy(name="test", version="1"),
+        request=documented_request,
+        result=result(),
+        evaluation_run_id="evaluation-1",
+    )
+
+    policy_result = next(item for item in report.results if item.rule == "policy")
+    assert report.outcome is GateOutcome.FAIL
+    assert policy_result.confirmed is True
+    assert "EXTRA_FILES" in policy_result.detail
