@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from fixjury.agents import mini
 from fixjury.agents.base import LlmConfig, RunRequest
 from fixjury.agents.container_harness import ContainerHarnessAdapter, HarnessSpec
 
@@ -161,6 +162,10 @@ def test_a_config_file_and_a_trajectory_stay_out_of_the_patch(workspace: Path) -
             config_text=lambda llm, max_steps: f"step_limit: {max_steps}\n",
             trajectory_file="fixjury-trajectory.json",
             trajectory_success_status="Submitted",
+            # A harness that records a trajectory must say how to read it: the spec
+            # refuses a file nobody can parse, or every third-party run would report
+            # zero tokens and a truncated run would look like a submission.
+            read_trajectory=mini.read_run,
         )
     )
     request = replace(request_for(workspace), max_steps=7)
@@ -196,6 +201,7 @@ def test_a_harness_that_stopped_at_its_limit_did_not_declare_success(workspace: 
             ),
             trajectory_file="fixjury-trajectory.json",
             trajectory_success_status="Submitted",
+            read_trajectory=mini.read_run,
         )
     )
 
@@ -225,6 +231,7 @@ def test_platform_file_names_can_already_exist_in_the_repository(workspace: Path
             image=IMAGE,
             command=("sh", "-c", "printf 'VALUE = 2\\n' > src/module.py"),
             trajectory_file="fixjury-trajectory.json",
+            read_trajectory=mini.read_run,
         )
     )
 
