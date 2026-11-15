@@ -7,6 +7,7 @@ what they mean, and the platform writes the row.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from fixjury.models import RejectionCode
@@ -58,6 +59,67 @@ class VerificationResult:
 
 def _failed(outcomes: tuple[CheckOutcome, ...], tool: CheckTool) -> list[CheckOutcome]:
     return [outcome for outcome in outcomes if outcome.tool is tool and not outcome.passed]
+
+
+def stored_outcomes(outcomes: tuple[CheckOutcome, ...]) -> list[dict[str, object]]:
+    """The JSONB shape of ``verdicts.check_results``.
+
+    Serialising the outcome next to its type keeps the writer and the reader in one
+    module: they have to agree on every key, and a split definition drifts silently.
+    """
+
+    return [
+        {
+            "command": outcome.command,
+            "tool": outcome.tool.value,
+            "exit_code": outcome.exit_code,
+            "output": outcome.output,
+            "heldout": outcome.heldout,
+        }
+        for outcome in outcomes
+    ]
+
+
+def _as_int(value: object) -> int | None:
+    # ``bool`` is an ``int`` in Python; a stored ``True`` is not an exit code.
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _as_text(value: object) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def outcomes_from_stored(raw: Iterable[object]) -> tuple[CheckOutcome, ...]:
+    """Rebuild outcomes from a stored verdict.
+
+    A row this module cannot read is skipped rather than guessed at: a missing check is
+    visible as missing evidence, while a fabricated one is invisible.
+    """
+
+    outcomes: list[CheckOutcome] = []
+    for item in raw:
+        if not isinstance(item, Mapping):
+            continue
+        command = _as_text(item.get("command"))
+        exit_code = _as_int(item.get("exit_code"))
+        try:
+            tool = CheckTool(_as_text(item.get("tool")))
+        except ValueError:
+            continue
+        if not command or exit_code is None:
+            continue
+        outcomes.append(
+            CheckOutcome(
+                command=command,
+                tool=tool,
+                exit_code=exit_code,
+                output=_as_text(item.get("output")),
+                heldout=item.get("heldout") is True,
+            )
+        )
+    return tuple(outcomes)
 
 
 def assemble(

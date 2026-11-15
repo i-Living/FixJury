@@ -31,19 +31,26 @@ _SHELL_METACHARACTERS = frozenset(";|&<>$`\\\n\r\t\"'")
 
 
 class CheckTool(StrEnum):
-    """Commands the verification runner is allowed to execute (PLAN §8)."""
+    """Commands the verification runner is allowed to execute (PLAN §8, PLAN_V1.1 §1.2)."""
 
     pytest = "pytest"
     ruff = "ruff"
     mypy = "mypy"
+    # Coverage is the only check added in V1.1: the pipeline may measure it, no task is
+    # required to declare it, and a missing report is a gap rather than a pass.
+    coverage = "coverage"
 
 
 class CheckCommand(BaseModel):
-    """A parsed check command: a whitelisted tool plus relative paths."""
+    """A parsed check command: a whitelisted tool, its fixed prefix and relative paths."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     tool: CheckTool
+    #: Everything between the tool and the paths, fixed per tool: `check` for ruff,
+    #: `run -m pytest` or `report` for coverage. `args` stays paths-only so the
+    #: validators can check every argument as one.
+    prefix: tuple[str, ...] = ()
     args: tuple[str, ...]
 
 
@@ -58,12 +65,39 @@ def _check_relative_path(raw: str, *, what: str) -> str:
     return raw
 
 
+def _parse_coverage(args: list[str], raw: str) -> tuple[tuple[str, ...], list[str]]:
+    """Split ``coverage run -m pytest <paths>`` and ``coverage report`` into prefix and paths.
+
+    A free-form coverage command would let a task load a plugin or write a data file into
+    the workspace, and the runner executes this inside the verification container, so the
+    two shapes are the whole allowed surface.
+    """
+
+    if not args:
+        raise ValueError(f"coverage needs a subcommand: {raw!r}")
+    if args[0] == "report":
+        if len(args) > 1:
+            raise ValueError(f"coverage report takes no arguments here: {raw!r}")
+        return ("report",), []
+    if args[0] != "run":
+        raise ValueError(f"coverage subcommand must be 'run' or 'report': {raw!r}")
+    if args[1:3] != ["-m", "pytest"]:
+        raise ValueError(
+            f"coverage run is only allowed as 'coverage run -m pytest <paths>': {raw!r}"
+        )
+    paths = args[3:]
+    if not paths:
+        raise ValueError(f"coverage run -m pytest needs at least one path: {raw!r}")
+    return ("run", "-m", "pytest"), paths
+
+
 def parse_check(raw: str) -> CheckCommand:
     """Parse a ``checks`` entry, rejecting anything outside the whitelist.
 
     Allowed shapes: ``pytest [path ...]``, ``ruff check <path ...>``,
-    ``mypy <path ...>``. Flags, shell syntax and absolute paths are refused so
-    a task file can never smuggle arbitrary commands into the runner.
+    ``mypy <path ...>``, ``coverage run -m pytest <path ...>`` and ``coverage report``.
+    Flags, shell syntax and absolute paths are refused so a task file can never smuggle
+    arbitrary commands into the runner.
     """
 
     if any(character in _SHELL_METACHARACTERS for character in raw):
@@ -78,15 +112,18 @@ def parse_check(raw: str) -> CheckCommand:
         raise ValueError(f"check command must start with one of {allowed}: {raw!r}") from exc
 
     args = tokens[1:]
+    prefix: tuple[str, ...] = ()
     if tool is CheckTool.ruff:
         if not args or args[0] != "check":
             raise ValueError(f"ruff checks must use the 'check' subcommand: {raw!r}")
-        args = args[1:]
+        prefix, args = ("check",), args[1:]
+    elif tool is CheckTool.coverage:
+        prefix, args = _parse_coverage(args, raw)
     if tool in (CheckTool.ruff, CheckTool.mypy) and not args:
         raise ValueError(f"{tool.value} check needs at least one path: {raw!r}")
     for argument in args:
         _check_relative_path(argument, what=f"{tool.value} path")
-    return CheckCommand(tool=tool, args=tuple(args))
+    return CheckCommand(tool=tool, prefix=prefix, args=tuple(args))
 
 
 class TaskIssue(BaseModel):

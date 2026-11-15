@@ -12,7 +12,15 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fixjury.db import make_engine
-from fixjury.models import Rejection, RejectionCode, RejectionSource, Run, RunStatus, Verdict
+from fixjury.models import (
+    HumanVerdict,
+    Rejection,
+    RejectionCode,
+    RejectionSource,
+    Run,
+    RunStatus,
+    Verdict,
+)
 from fixjury.tasks.loader import read_task
 from fixjury.tasks.schema import TaskDocument
 from fixjury.verify import service
@@ -131,6 +139,55 @@ def test_verifying_twice_keeps_one_verdict(monkeypatch: pytest.MonkeyPatch) -> N
     assert verdict.automated_pass is False
     assert verdicts == 1, "a second verification must replace the verdict, not add one"
     assert rejections == 2, "one rejection per violation, not one per verification"
+
+
+def test_re_verification_keeps_the_human_review(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Backfilling check evidence must not erase what a reviewer decided."""
+
+    require_postgres()
+
+    async def fake_verify(
+        document: TaskDocument,
+        diff: str,
+        *,
+        workspace: Path,
+        image: str,
+        heldout_bundle: Path | None = None,
+    ) -> VerificationResult:
+        return RESULT
+
+    monkeypatch.setattr(service, "verify_workspace", fake_verify)
+
+    async def scenario() -> Verdict:
+        async with rolled_back_session() as session:
+            run = await store_run(session, attempt=13, diff="diff --git a/x b/x\n")
+            first = await service.verify_run(session, run.id, corpus_root=CORPUS)
+            first.human_verdict = HumanVerdict.accept
+            first.human_reviewer = "owner"
+            first.batch_id = "batch-13"
+            session.add(
+                Rejection(
+                    run_id=run.id,
+                    source=RejectionSource.human,
+                    code=RejectionCode.NO_REGRESSION_TEST,
+                    note="the reviewer wants a regression test",
+                )
+            )
+            await session.flush()
+            second = await service.verify_run(session, run.id, corpus_root=CORPUS)
+            kept = await session.scalar(
+                select(func.count())
+                .select_from(Rejection)
+                .where(Rejection.run_id == run.id, Rejection.source == RejectionSource.human)
+            )
+            assert int(kept or 0) == 1, "a reviewer's rejection survives re-verification"
+            return second
+
+    verdict = asyncio.run(scenario())
+
+    assert verdict.human_verdict is HumanVerdict.accept
+    assert verdict.human_reviewer == "owner"
+    assert verdict.batch_id == "batch-13"
 
 
 def test_a_run_without_a_diff_is_not_verified_in_a_container(

@@ -24,7 +24,7 @@ from fixjury.sandbox.tools import ToolError
 from fixjury.tasks.loader import read_task, task_path
 from fixjury.verify.policy import Violation, check_policy
 from fixjury.verify.runner import VerificationError, verify_workspace
-from fixjury.verify.verdict import VerificationResult, assemble
+from fixjury.verify.verdict import VerificationResult, assemble, stored_outcomes
 
 LOGGER = logging.getLogger(__name__)
 HELDOUT_DIRNAME = "heldout"
@@ -139,25 +139,38 @@ async def _restore(session: AsyncSession, run: Run) -> None:
 async def store_verdict(
     session: AsyncSession, run_id: uuid.UUID, result: VerificationResult
 ) -> Verdict:
-    """Replace the verdict for ``run_id`` with ``result``; never duplicate rows."""
+    """Replace the automated part of the verdict for ``run_id``; never duplicate rows.
 
-    existing = await session.get(Verdict, run_id)
-    if existing is not None:
-        await session.delete(existing)
-        await session.flush()
-    await session.execute(delete(Rejection).where(Rejection.run_id == run_id))
+    Re-verification rewrites what the checks said and leaves the review alone. A human
+    verdict is a record of what a person decided about this run: it does not become false
+    because the diff was checked a second time, and ``fixjury verify`` is documented as the
+    way to backfill check evidence on an older run.
+    """
 
-    verdict = Verdict(
-        run_id=run_id,
-        tests_pass=result.tests_pass,
-        lint_pass=result.lint_pass,
-        type_pass=result.type_pass,
-        policy_pass=result.policy_pass,
-        heldout_pass=result.heldout_pass,
-        automated_pass=result.automated_pass,
-        tool_versions=dict(result.tool_versions),
+    verdict = await session.get(Verdict, run_id)
+    if verdict is None:
+        verdict = Verdict(run_id=run_id)
+        session.add(verdict)
+    # Only the automated rejections are this function's to replace: a rejection a reviewer
+    # or a human recorded is part of the review, and re-checking the diff does not answer it.
+    await session.execute(
+        delete(Rejection).where(
+            Rejection.run_id == run_id, Rejection.source == RejectionSource.automated
+        )
     )
-    session.add(verdict)
+
+    verdict.tests_pass = result.tests_pass
+    verdict.lint_pass = result.lint_pass
+    verdict.type_pass = result.type_pass
+    verdict.policy_pass = result.policy_pass
+    verdict.heldout_pass = result.heldout_pass
+    verdict.automated_pass = result.automated_pass
+    verdict.tool_versions = dict(result.tool_versions)
+    # The evidence a judge has to cite, stored with the verdict it belongs to: it cannot
+    # be rebuilt from five booleans, and re-running verification to recover it would spend
+    # sandbox minutes on a decision already taken.
+    verdict.check_results = stored_outcomes(result.outcomes)
+
     for violation in result.rejections:
         session.add(
             Rejection(

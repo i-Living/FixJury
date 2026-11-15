@@ -74,6 +74,9 @@ TOOL_VERSION_COMMANDS = (
     ("pytest", ["pytest", "--version"]),
     ("ruff", ["ruff", "--version"]),
     ("mypy", ["mypy", "--version"]),
+    # Coverage is a check too: a verdict that measured coverage under an unrecorded
+    # version is history nobody can reproduce.
+    ("coverage", ["coverage", "--version"]),
 )
 
 
@@ -115,12 +118,14 @@ def overlay_heldout(workspace: Path, bundle: Path) -> tuple[str, ...]:
 
 
 def check_argv(command: str) -> list[str]:
-    """Turn a task check into argv, keeping the whitelist from ``parse_check``."""
+    """Turn a task check into argv, keeping the whitelist from ``parse_check``.
+
+    The prefix is parsed, never re-derived here: a `coverage run -m pytest` check loses
+    its subcommand if this function only knows the tool name.
+    """
 
     parsed = parse_check(command)
-    if parsed.tool is CheckTool.ruff:
-        return ["ruff", "check", *parsed.args]
-    return [parsed.tool.value, *parsed.args]
+    return [parsed.tool.value, *parsed.prefix, *parsed.args]
 
 
 def scm_version_env(workspace: Path) -> dict[str, str]:
