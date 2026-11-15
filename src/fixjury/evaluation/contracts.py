@@ -30,9 +30,6 @@ from fixjury.models import (
 )
 from fixjury.tasks.schema import CheckTool
 
-#: Bumped when a stored document stops being readable by this module.
-SCHEMA_VERSION = "1.0"
-
 #: The name reserved for the held-out suite's check. The judge sees its outcome and never
 #: its command or output: those name the tests, and the tests are not for the judge.
 HELDOUT_NAME = "held-out"

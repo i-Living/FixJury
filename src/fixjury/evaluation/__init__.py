@@ -14,7 +14,6 @@ from fixjury.evaluation.checks import (
     to_check_results,
 )
 from fixjury.evaluation.contracts import (
-    SCHEMA_VERSION,
     AssessmentSummary,
     CheckResult,
     CheckStatus,
@@ -43,7 +42,6 @@ from fixjury.evaluation.scoring import (
 
 __all__ = [
     "DEFAULT_WEIGHTS",
-    "SCHEMA_VERSION",
     "AssessmentSummary",
     "CheckResult",
     "CheckStatus",
