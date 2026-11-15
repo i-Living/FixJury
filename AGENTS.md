@@ -47,6 +47,7 @@ uv run alembic upgrade head               # migrations
 uv run fixjury tasks validate benchmarks  # corpus check
 uv run fixjury run --task T-001 --agent baseline
 uv run fixjury verify --run <id>          # fresh container, policy, held-out
+uv run fixjury judge evaluate --run <id> # AI Judge: score, verdict, stored with its evidence
 uv run fixjury bench --agents baseline,mini --verify
 uv run fixjury review pack && uv run fixjury review serve
 uv run fixjury metrics compute --agent baseline
@@ -88,10 +89,13 @@ src/fixjury/sandbox/       container lifecycle, per-run network, tool API, diff 
 src/fixjury/verify/        check runner, held-out tests, policy, verdict assembly
 src/fixjury/review/        blind batching, rubric, review page (app.py + templates/)
 src/fixjury/metrics/       metric definitions (compute.py), snapshots (service.py), cost
+src/fixjury/evaluation/    evaluation contracts, structured check evidence, scoring engine
+src/fixjury/judge/         AI Judge: provider, validated reply schema, prompts, modes, aggregation
 src/fixjury/report/        markdown report, charts, the snapshot export the metrics page is built from
 src/fixjury/export.py      raw runs/verdicts/rejections as JSONL, with a hashed manifest
 src/fixjury/prompts/       *.md prompt files (English)
 config/pricing.yaml        pinned rates + pricing_version
+config/evaluation.yaml     scoring profile: criterion weights + profile version
 dockerfiles/mini/          the mini-swe-agent harness image (one pinned Dockerfile)
 dockerfiles/openhands/     the OpenHands harness image + the headless driver it runs
 benchmarks/tasks/T-xxx/    task.yaml, public fixtures
@@ -113,7 +117,7 @@ These are load-bearing. Breaking one silently invalidates published numbers.
 1. **The diff is the only transport.** An agent produces a unified diff; verification applies it to a pristine checkout of `base_commit`. Never verify inside the agent's container, never trust the agent's workspace state.
 2. **Held-out tests never reach the agent.** They live in `benchmarks/heldout/<id>/` in this repository — public by design — and isolation comes from the setup, not from secrecy: an agent only ever receives a checkout of the *target* repository at `base_commit`, with no network, so `benchmarks/` is not in its container. Mount held-out tests read-only into the verification container only.
 3. **Verification is a fresh container** built from `repo@base_commit` + diff, with the tool versions pinned in the task spec.
-4. **Review is blind.** The reviewer sees task, spec, patch and check results; agent and model fields are stripped. Blindness is auditable through `review_batches`, so shuffle order is stored, not regenerated.
+4. **Review is blind.** The reviewer sees task, spec, patch and check results; agent and model fields are stripped. Blindness is auditable through `review_batches`, so shuffle order is stored, not regenerated. The AI Judge is the standard verdict source ([`docs/PLAN_V1.1.md`](docs/PLAN_V1.1.md) decision 1) and follows the same rule: its context carries the task, the diff, the check evidence and the held-out pass/fail — never the agent, the model, the held-out source or a credential.
 5. **Metrics are computed once**, in `src/fixjury/metrics/`, from `runs` + `verdicts` + `rejections`, and persisted to `metric_snapshots` with `config_hash` and `pricing_version`. The report and the UI read snapshots. No metric arithmetic in SQL strings, notebooks, the dashboard or a human's head.
 6. **Adapters are stateless.** `AgentAdapter` may not write to the database, read global config or share objects between runs. Everything it needs arrives in the run spec.
 7. **Sandbox has no network and no docker socket.** The baseline agent calls the model from the platform process while tools execute inside the container. Third-party agents run inside the container on a per-run Docker network created with `internal=True`, so the container has no route out at all; the egress proxy binds the gateway of that network and allowlists one LLM endpoint. `HTTP_PROXY` is how the harness finds the proxy, never what keeps it in: a command that unsets the variable reaches nothing. The provider key does stay in the sandbox — the endpoint is HTTPS, and injecting the header at the proxy would need TLS interception — so the credential boundary is the network: there is nowhere to send the key except the allowlisted endpoint. The same rule covers verification: the prepare container that installs dependencies runs build backends taken from the diff, so it is not a container that "executes no agent-authored code". It gets an internal network of its own and an egress proxy allowlisting only the package index (`pypi.org:443`, `files.pythonhosted.org:443`); it never gets the open internet, and `HTTP_PROXY` is again a route, not a permission.
@@ -199,6 +203,8 @@ These are load-bearing. Breaking one silently invalidates published numbers.
 - **Blind review leaks through metadata.** Patch metadata, commit messages, code comments and PR-style formatting can reveal the agent, so packaging strips names and normalizes headers before review.
 - **A zero denominator is not zero cost.** `cost_per_accepted_fix` is `null`, not `0`, when nothing was accepted; the report must show `null`.
 - **An unreviewed pair is unknown, not rejected.** Acceptance and `false_completion_rate` divide by reviewed pairs only, and are `null` until the first verdict exists: dividing by all pairs turns the review backlog into a failure rate.
+- **An exit code is not a status.** pytest 3 (internal error), 4 (usage) and 5 (nothing collected) mean the check never ran, and `coverage report` exits 1 when it has no data to report. Coerced into `FAILED`, each of them turns a broken sandbox into a rejected patch: the outcome vocabulary keeps `ERROR` (could not run) and `FAILED` (ran and found a problem) apart, per tool and per coverage subcommand.
+- **A judge reply is untrusted input.** It arrives as text: a code fence, prose around the object, a missing criterion, an invented verdict, a finding that claims to be confirmed. `src/fixjury/judge/schema.py` refuses all of it and stamps `source`/`confirmed` itself, because a judge opinion that reaches the score as a confirmed failure is a fabricated rejection.
 
 ## Review bot
 

@@ -91,6 +91,26 @@ reviews:
         task, spec, run, attempt, verdict, rejection, batch, snapshot — no `job`, no
         `result`.
 
+    - path: "src/fixjury/evaluation/**"
+      instructions: |
+        Evaluation is computed once, from persisted rows, and the rules live in
+        `scoring.py`: a confirmed automated failure can only deny acceptance, missing
+        evidence yields `INCONCLUSIVE` never a pass, and `ERROR` (a check that could not
+        run) is a gap rather than a failure. Flag any path that lets a judge raise a score
+        through a failed check, turns a partial result into an acceptance, or recomputes a
+        score outside this package. Criteria weights live in `config/evaluation.yaml` with a
+        version that must travel with every result.
+
+    - path: "src/fixjury/judge/**"
+      instructions: |
+        A judge reply is untrusted input: `schema.py` validates it, stamps `source` and
+        `confirmed`, and refuses a finding without evidence — a model opinion must never
+        arrive as a confirmed failure. The judge context carries the task, the diff, the
+        check evidence and the held-out outcome, never agent identity, held-out source or a
+        credential. Budgets and escalation limits are enforced before a call, and an
+        exhausted budget is `INCONCLUSIVE`, never acceptance. Prompts live in
+        `src/fixjury/prompts/judge_*.md` and are versioned by their digest.
+
     - path: "src/fixjury/metrics/**"
       instructions: |
         Metrics are computed exactly once, here, from `runs` + `verdicts` + `rejections`,
