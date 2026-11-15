@@ -32,6 +32,7 @@ from fixjury.evaluation.contracts import (
     EvaluationRequest,
     EvaluationResult,
     JudgeMode,
+    digest,
 )
 from fixjury.models import EvaluationVerdict, FindingSeverity, FindingSource
 from fixjury.tasks.schema import CheckTool
@@ -426,14 +427,34 @@ def _gate_budget(policy: GatePolicy, result: EvaluationResult) -> GateResult:
     return GateResult(rule="budget", outcome=GateOutcome.PASS, detail=f"{used} judge token(s)")
 
 
-def evidence_mismatch(result: EvaluationResult, checks: Sequence[CheckResult]) -> str | None:
+def evidence_mismatch(
+    result: EvaluationResult,
+    checks: Sequence[CheckResult],
+    *,
+    recorded_sha256: str | None = None,
+) -> str | None:
     """Say why the checks no longer match the evaluation, or ``None`` when they do.
 
     Re-verification rewrites ``verdicts.check_results`` in place, and the stored evaluation
     keeps the findings it derived from the old ones. Gating that pair would combine a verdict
     about one set of checks with the evidence of another — so the gate refuses and says which
     command fixes it.
+
+    The exact answer is the digest the evaluation recorded. An evaluation written before that
+    field existed has no digest and falls back to comparing the failures it recorded: that
+    catches a check going from failing to passing, but not one going from passing to
+    unmeasured.
     """
+
+    if recorded_sha256 is not None:
+        current_digest = digest([item.model_dump(mode="json") for item in checks])
+        if current_digest == recorded_sha256:
+            return None
+        return (
+            "the run's checks changed after this evaluation was made "
+            f"(recorded {recorded_sha256[:12]}…, current {current_digest[:12]}…): "
+            "re-run `fixjury judge evaluate` on this run before gating it"
+        )
 
     recorded = {
         finding.evidence_ref

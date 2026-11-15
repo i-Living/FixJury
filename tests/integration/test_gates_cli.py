@@ -259,5 +259,5 @@ def test_a_stored_evaluation_is_not_gated_against_newer_evidence() -> None:
         asyncio.run(remove(run_id))
 
     assert result.exit_code == 2
-    assert "different check evidence" in result.output
+    assert "changed after this evaluation" in result.output
     assert "judge evaluate" in result.output

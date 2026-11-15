@@ -83,6 +83,18 @@ class EvaluationConfiguration(BaseModel):
     max_escalation_rounds: int = Field(default=2, ge=0, le=5)
     token_budget: int = Field(default=200_000, ge=0)
     timeout_s: int = Field(default=300, ge=1)
+    #: Digest of the check evidence this evaluation was made from. Re-verification rewrites
+    #: `verdicts.check_results` in place, so without it a gate could combine a stored verdict
+    #: with a different set of checks. ``None`` means the evaluation predates the field, and a
+    #: gate falls back to comparing the findings it recorded.
+    evidence_sha256: str | None = Field(default=None)
+
+    @field_validator("evidence_sha256")
+    @classmethod
+    def _valid_evidence_digest(cls, value: str | None) -> str | None:
+        if value is not None and not _SHA256.match(value):
+            raise ValueError(f"evidence digest must be a sha256 hex string: {value!r}")
+        return value
 
     def config_hash(self) -> str:
         return digest(self.model_dump(mode="json"))

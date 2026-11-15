@@ -17,7 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fixjury.config import settings
 from fixjury.evaluation.checks import outcomes_from_stored, to_check_results
-from fixjury.evaluation.contracts import EvaluationConfiguration, EvaluationRequest
+from fixjury.evaluation.contracts import (
+    EvaluationConfiguration,
+    EvaluationRequest,
+    digest,
+)
 from fixjury.models import Rejection, RejectionSource, Run, Verdict
 from fixjury.run import agent_spec_text
 from fixjury.tasks.loader import TaskFileError, read_task, task_path
@@ -86,6 +90,8 @@ async def build_request(
             f"run {run_id} has no stored check evidence; re-verify it so the verdict "
             "records what each check printed"
         )
+    checks = to_check_results(outcomes)
+    configuration = config or default_configuration()
     return EvaluationRequest(
         subject_ref=document.id,
         run_id=run.id,
@@ -93,10 +99,14 @@ async def build_request(
         diff=diff,
         diff_sha256=diff_sha256,
         spec_text=agent_spec_text(document),
-        checks=to_check_results(outcomes),
+        checks=checks,
         policy_pass=verdict.policy_pass,
         policy_violations=await _policy_violations(session, run_id),
-        config=config or default_configuration(),
+        # The configuration records which evidence it was made from, so a gate can tell an
+        # evaluation of this verdict from an evaluation of an older one.
+        config=configuration.model_copy(
+            update={"evidence_sha256": digest([item.model_dump(mode="json") for item in checks])}
+        ),
     )
 
 

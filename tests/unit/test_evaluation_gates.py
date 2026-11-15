@@ -16,6 +16,7 @@ from fixjury.evaluation.contracts import (
     EvaluationRequest,
     EvaluationResult,
     EvaluationScore,
+    digest,
 )
 from fixjury.evaluation.gates import (
     GateError,
@@ -45,8 +46,14 @@ def commit() -> str:
     return "a" * 40
 
 
-def digest(diff: str = DIFF) -> str:
+def sha_of(diff: str = DIFF) -> str:
     return hashlib.sha256(diff.encode("utf-8")).hexdigest()
+
+
+def evidence_sha(checks: tuple[CheckResult, ...]) -> str:
+    """The digest ``build_request`` stamps on a configuration for exactly these checks."""
+
+    return digest([item.model_dump(mode="json") for item in checks])
 
 
 def check(
@@ -70,7 +77,7 @@ def request(
         run_id=__import__("uuid").uuid4(),
         base_commit=commit(),
         diff=diff,
-        diff_sha256=digest(diff),
+        diff_sha256=sha_of(diff),
         spec_text="# Task T-001",
         checks=checks,
         config=EvaluationConfiguration(mode=mode),  # type: ignore[arg-type]
@@ -494,3 +501,40 @@ def test_a_score_without_a_judge_is_incomplete_not_low() -> None:
     assert score_result.outcome is GateOutcome.INCONCLUSIVE
     assert "incomplete" in score_result.detail
     assert report.outcome is GateOutcome.INCONCLUSIVE
+
+
+def test_the_recorded_evidence_digest_catches_any_status_change() -> None:
+    """A non-required check going from passing to unmeasured is still a different evaluation."""
+
+    documented_request, documented_result = passing()
+    recorded = evidence_sha(documented_request.checks)
+
+    assert (
+        evidence_mismatch(documented_result, documented_request.checks, recorded_sha256=recorded)
+        is None
+    )
+
+    changed = (
+        check("pytest tests/test_app.py"),
+        check("held-out"),
+        # ruff was never required by the policy, but it was part of what was evaluated.
+        check("ruff check .", status=CheckStatus.ERROR, exit_code=3, tool=CheckTool.ruff),
+    )
+    reason = evidence_mismatch(documented_result, changed, recorded_sha256=recorded)
+
+    assert reason is not None
+    assert "changed after this evaluation" in reason
+    assert "judge evaluate" in reason
+
+
+def test_an_evaluation_without_a_digest_falls_back_to_its_findings() -> None:
+    """Older evaluations carry no digest; their failures are still compared."""
+
+    documented_request, documented_result = passing()
+    revised = (
+        check("pytest tests/test_app.py", status=CheckStatus.FAILED, exit_code=1),
+        check("held-out"),
+    )
+
+    assert evidence_mismatch(documented_result, revised) is not None
+    assert evidence_mismatch(documented_result, documented_request.checks) is None

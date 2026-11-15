@@ -654,7 +654,11 @@ def gates_check(
                     corpus_root=corpus,
                     config=EvaluationConfiguration.model_validate(newest.config),
                 )
-                mismatch = evidence_mismatch(stored.result, request.checks)
+                mismatch = evidence_mismatch(
+                    stored.result,
+                    request.checks,
+                    recorded_sha256=newest.config.get("evidence_sha256"),
+                )
                 if mismatch is not None:
                     raise GateError(mismatch)
                 report = evaluate_gates(

@@ -389,7 +389,10 @@ def test_a_stored_evaluation_passes_the_shipped_quality_gates() -> None:
                 profile=load_profile(PROFILE_PATH),
             )
             request = await build_request(
-                session, run_id=run.id, corpus_root=CORPUS, config=judged.evaluation.config
+                session,
+                run_id=run.id,
+                corpus_root=CORPUS,
+                config=EvaluationConfiguration.model_validate(judged.evaluation.config),
             )
             report = evaluate_gates(
                 load_policy(GATES_PATH),
