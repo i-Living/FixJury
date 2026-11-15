@@ -2,6 +2,17 @@ import { MetricChart } from "@/components/metric-charts";
 import { loadDashboard } from "@/lib/data";
 import { NULL_TEXT, amount, count, exclusions, interval, percent, seconds } from "@/lib/format";
 
+/** A calibration rate always carries its denominator: a bare share hides the sample. */
+function rateText(rate: { count: number; of: number; rate: number | null }): string {
+  return `${count(rate.count)}/${count(rate.of)} (${percent(rate.rate)})`;
+}
+
+function thresholdWord(value: boolean | null): string {
+  if (value === true) return "yes";
+  if (value === false) return "no";
+  return "not measured";
+}
+
 /** A missing value is the word null on muted ink, never a zero. */
 function Cell({ text }: { text: string }) {
   return text === NULL_TEXT ? <span className="isnull">{text}</span> : <>{text}</>;
@@ -40,11 +51,12 @@ export default function Page() {
           <thead>
             <tr>
               <th>Agent</th>
+              <th>Verdict source</th>
               <th className="num">Acceptance</th>
               <th className="num">95% CI</th>
               <th className="num">Regression-free</th>
               <th className="num">Task success</th>
-              <th className="num">Accepted / reviewed</th>
+              <th className="num">Accepted / decided</th>
               <th className="num">Tokens per fix</th>
               <th className="num">Cost per fix</th>
               <th className="num">Median repair</th>
@@ -52,14 +64,17 @@ export default function Page() {
             </tr>
           </thead>
           <tbody>
-            {agents.map(({ agent, metrics, denominators }) => (
+            {agents.map(({ agent, verdict_source, metrics, denominators }) => (
               <tr key={agent}>
                 <td className="agent">{agent}</td>
-                <td className="num">
-                  <Cell text={percent(metrics.human_acceptance_rate)} />
+                <td>
+                  <code>{verdict_source}</code>
                 </td>
                 <td className="num">
-                  <Cell text={interval(metrics.human_acceptance_ci)} />
+                  <Cell text={percent(metrics.acceptance_rate)} />
+                </td>
+                <td className="num">
+                  <Cell text={interval(metrics.acceptance_ci)} />
                 </td>
                 <td className="num">
                   <Cell text={percent(metrics.regression_free_acceptance_rate)} />
@@ -68,7 +83,7 @@ export default function Page() {
                   <Cell text={percent(metrics.task_success_rate)} />
                 </td>
                 <td className="num">
-                  {count(denominators.accepted)} / {count(denominators.reviewed_pairs)}
+                  {count(denominators.accepted)} / {count(denominators.decided_pairs)}
                 </td>
                 <td className="num">
                   <Cell text={amount(metrics.tokens_per_accepted_fix)} />
@@ -91,12 +106,12 @@ export default function Page() {
       <h2>Charts</h2>
       <div className="charts">
         <figure>
-          <figcaption>Human acceptance with its 95% Wilson interval</figcaption>
+          <figcaption>Acceptance with its 95% Wilson interval</figcaption>
           <div className="plot">
             <MetricChart
               kind="acceptance"
               agents={agents}
-              label="Human acceptance per agent with its 95% Wilson interval"
+              label="Acceptance per agent with its 95% Wilson interval"
             />
           </div>
           <Legend
@@ -108,10 +123,10 @@ export default function Page() {
           <ul className="values">
             {agents.map((agent) => (
               <li key={agent.agent}>
-                <b>{agent.agent}</b> {percent(agent.metrics.human_acceptance_rate)}
-                {agent.metrics.human_acceptance_ci === null
+                <b>{agent.agent}</b> {percent(agent.metrics.acceptance_rate)}
+                {agent.metrics.acceptance_ci === null
                   ? null
-                  : ` (${interval(agent.metrics.human_acceptance_ci)})`}
+                  : ` (${interval(agent.metrics.acceptance_ci)})`}
               </li>
             ))}
           </ul>
@@ -188,7 +203,7 @@ export default function Page() {
             <tr>
               <th>Agent</th>
               <th className="num">Pairs</th>
-              <th className="num">Reviewed</th>
+              <th className="num">Decided</th>
               <th className="num">Accepted</th>
               <th className="num">Regression-free</th>
               <th className="num">Automated pass</th>
@@ -203,7 +218,7 @@ export default function Page() {
               <tr key={agent.agent}>
                 <td className="agent">{agent.agent}</td>
                 <td className="num">{count(agent.denominators.pairs)}</td>
-                <td className="num">{count(agent.denominators.reviewed_pairs)}</td>
+                <td className="num">{count(agent.denominators.decided_pairs)}</td>
                 <td className="num">{count(agent.denominators.accepted)}</td>
                 <td className="num">{count(agent.denominators.regression_free_accepted)}</td>
                 <td className="num">{count(agent.denominators.automated_pass_pairs)}</td>
@@ -219,6 +234,57 @@ export default function Page() {
         </table>
       </div>
 
+      {agents.some((agent) => agent.calibration !== undefined) ? (
+        <>
+          <h2>Judge calibration</h2>
+          <p>
+            The reference label is the held-out suite, which no model produced. A pair the
+            held-out suite could not answer has no label and is counted as unlabelled, never as a
+            judge mistake.
+          </p>
+          <div className="scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Agent</th>
+                  <th className="num">Labelled / unlabelled</th>
+                  <th className="num">False acceptance</th>
+                  <th className="num">False rejection</th>
+                  <th className="num">Inter-judge agreement</th>
+                  <th className="num">Brier</th>
+                  <th className="num">Escalation</th>
+                  <th>Within thresholds</th>
+                </tr>
+              </thead>
+              <tbody>
+                {agents
+                  .filter((agent) => agent.calibration !== undefined)
+                  .map((agent) => {
+                    const calibration = agent.calibration;
+                    if (calibration === undefined) return null;
+                    return (
+                      <tr key={agent.agent}>
+                        <td className="agent">{agent.agent}</td>
+                        <td className="num">
+                          {count(calibration.labeled_pairs)} / {count(calibration.unlabeled_pairs)}
+                        </td>
+                        <td className="num">{rateText(calibration.false_acceptance)}</td>
+                        <td className="num">{rateText(calibration.false_rejection)}</td>
+                        <td className="num">{rateText(calibration.agreement)}</td>
+                        <td className="num">
+                          <Cell text={amount(calibration.brier === null ? null : String(calibration.brier))} />
+                        </td>
+                        <td className="num">{rateText(calibration.escalation)}</td>
+                        <td>{thresholdWord(calibration.meets_thresholds)}</td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      ) : null}
+
       <div className="notes">
         <ul>
           <li>
@@ -227,12 +293,15 @@ export default function Page() {
           </li>
           <li>
             <code>null</code> means the denominator was zero: a zero denominator is not zero cost or
-            zero acceptance. Acceptance counts reviewed pairs only; a pair no reviewer has seen is
-            unknown, not rejected.
+            zero acceptance. Acceptance counts decided pairs only; a pair no verdict exists for is
+            unknown, not rejected. The verdict source is named in the table.
           </li>
           <li>
             A missing held-out result is a data defect, not a pass: those pairs leave the
             regression-free rate and are counted above.
+          </li>
+          <li>
+            Judge tokens and cost are reported beside the agent's, never inside them.
           </li>
           <li>
             Costs computed under different <code>pricing_version</code> values are not comparable.

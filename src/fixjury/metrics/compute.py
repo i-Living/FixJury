@@ -3,6 +3,11 @@
 Everything here is arithmetic on values the database already holds, so the same
 inputs always produce the same numbers and a test can pin them. No SQL string in
 this module computes a metric, and nothing here reads the clock.
+
+V1.1 adds one dimension rather than a second pipeline: ``verdict_source`` decides
+which stored verdict answers "was this patch accepted" — the reviewer's, or the AI
+Judge's (PLAN_V1.1 decision 1). Human review stays a supported series: a snapshot
+labelled ``human`` is the V1 measurement, and the two are never averaged together.
 """
 
 from __future__ import annotations
@@ -11,8 +16,21 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
+from enum import StrEnum
 
 Z_95 = 1.959963984540054
+
+
+class VerdictSource(StrEnum):
+    """Which verdict a metric counts (PLAN_V1.1 §3.2, decision 1).
+
+    The AI Judge is the standard source for V1.1; ``human`` reproduces the V1 series.
+    A snapshot always says which one it read, because acceptance rates from the two are
+    different measurements of the same corpus.
+    """
+
+    human = "human"
+    judge = "judge"
 
 
 @dataclass(frozen=True)
@@ -33,6 +51,17 @@ class Attempt:
     heldout_pass: bool | None = None
     policy_pass: bool | None = None
     human_verdict: str | None = None
+    difficulty: str | None = None
+    # The newest judge evaluation of this run, as the metrics need it. ``judge_verdicts``
+    # keeps one entry per assessment so agreement can be measured without a second query.
+    judge_verdict: str | None = None
+    judge_confidence: float | None = None
+    judge_verdicts: tuple[str, ...] = ()
+    judge_escalated: bool = False
+    judge_evaluations: int = 0
+    judge_tokens_in: int = 0
+    judge_tokens_out: int = 0
+    judge_cost_list_usd: Decimal = Decimal("0")
 
     @property
     def finished(self) -> bool:
@@ -54,9 +83,9 @@ class Interval:
 
 @dataclass(frozen=True)
 class CorpusSplit:
-    """Where the reviewed pairs end up: three shares that add up to 1, or nothing at all.
+    """Where the decided pairs end up: three shares that add up to 1, or nothing at all.
 
-    ``None`` is not zero here: a snapshot with no reviewed pair says "unknown", and a
+    ``None`` is not zero here: a snapshot with no decided pair says "unknown", and a
     chart that drew 0% would state a rate nobody measured.
     """
 
@@ -70,16 +99,21 @@ class MetricsReport:
     """Everything §3.2 asks for, plus the denominators that explain it."""
 
     agent: str
+    verdict_source: VerdictSource
     pairs: int
-    reviewed_pairs: int
+    decided_pairs: int
+    human_labeled_pairs: int
+    evaluated_pairs: int
     accepted: int
     regression_free_accepted: int
     automated_pass_pairs: int
     declared_success_runs: int
     tokens_total: int
+    judge_tokens_total: int
     cost_total: Decimal
-    human_acceptance_rate: float | None
-    human_acceptance_ci: Interval | None
+    judge_cost_total: Decimal
+    acceptance_rate: float | None
+    acceptance_ci: Interval | None
     regression_free_acceptance_rate: float | None
     regression_free_acceptance_ci: Interval | None
     task_success_rate: float | None
@@ -93,21 +127,21 @@ class MetricsReport:
     exclusions: dict[str, int] = field(default_factory=dict)
 
 
-def corpus_split(reviewed: int, accepted: int, regression_free: int) -> CorpusSplit:
-    """The share of reviewed pairs that ended clean, regressed, or unaccepted.
+def corpus_split(decided: int, accepted: int, regression_free: int) -> CorpusSplit:
+    """The share of decided pairs that ended clean, regressed, or unaccepted.
 
     Trust the pairs, not the counters: a snapshot cannot describe more acceptances than
     it has pairs, and a regression-free acceptance is a subset of an acceptance.
     """
 
-    if reviewed <= 0:
+    if decided <= 0:
         return CorpusSplit(None, None, None)
-    accepted_count = min(max(accepted, 0), reviewed)
+    accepted_count = min(max(accepted, 0), decided)
     clean_count = min(max(regression_free, 0), accepted_count)
     return CorpusSplit(
-        regression_free=clean_count / reviewed,
-        with_regression=(accepted_count - clean_count) / reviewed,
-        not_accepted=(reviewed - accepted_count) / reviewed,
+        regression_free=clean_count / decided,
+        with_regression=(accepted_count - clean_count) / decided,
+        not_accepted=(decided - accepted_count) / decided,
     )
 
 
@@ -147,13 +181,22 @@ def _pairs(attempts: Sequence[Attempt]) -> dict[str, list[Attempt]]:
     return grouped
 
 
-def _is_accepted(runs: Sequence[Attempt]) -> bool:
-    return any(run.human_verdict == "accept" for run in runs)
+def _verdict(run: Attempt, source: VerdictSource) -> str | None:
+    """The verdict this source reads from one attempt, as stored."""
+
+    return run.judge_verdict if source is VerdictSource.judge else run.human_verdict
 
 
-def _is_regression_free(runs: Sequence[Attempt]) -> bool:
+def _is_accepted(runs: Sequence[Attempt], source: VerdictSource) -> bool:
     return any(
-        run.human_verdict == "accept" and run.heldout_pass is True and run.policy_pass is True
+        _verdict(run, source) == "ACCEPTED" or _verdict(run, source) == "accept" for run in runs
+    )
+
+
+def _is_regression_free(runs: Sequence[Attempt], source: VerdictSource) -> bool:
+    acceptance = "ACCEPTED" if source is VerdictSource.judge else "accept"
+    return any(
+        _verdict(run, source) == acceptance and run.heldout_pass is True and run.policy_pass is True
         for run in runs
     )
 
@@ -185,65 +228,87 @@ def _heldout_is_missing(runs: Sequence[Attempt]) -> bool:
     return bool(with_diff) and not any(run.heldout_pass is not None for run in with_diff)
 
 
-def compute_metrics(attempts: Sequence[Attempt], *, agent: str) -> MetricsReport:
-    """Compute every §3.2 metric for one agent."""
+def compute_metrics(
+    attempts: Sequence[Attempt],
+    *,
+    agent: str,
+    verdict_source: VerdictSource = VerdictSource.human,
+) -> MetricsReport:
+    """Compute every §3.2 metric for one agent, under one verdict source."""
 
     grouped = _pairs(attempts)
     finished_pairs = {
         task_id: runs for task_id, runs in grouped.items() if any(run.finished for run in runs)
     }
     pairs = len(finished_pairs)
-    # Acceptance is a statement about reviewed patches. Counting an unreviewed pair
-    # as "not accepted" would report the review backlog as a failure rate.
-    reviewed_pairs = {
+    # Acceptance is a statement about pairs a verdict exists for. Counting an undecided
+    # pair as "not accepted" would report the evaluation backlog as a failure rate.
+    decided_pairs = {
         task_id: runs
         for task_id, runs in finished_pairs.items()
-        if any(run.human_verdict is not None for run in runs)
+        if any(_verdict(run, verdict_source) is not None for run in runs)
     }
-    reviewed = len(reviewed_pairs)
-    accepted_runs = [run for runs in reviewed_pairs.values() for run in runs if _is_accepted(runs)]
-    accepted_pairs = sum(1 for runs in reviewed_pairs.values() if _is_accepted(runs))
-    regression_free = sum(1 for runs in reviewed_pairs.values() if _is_regression_free(runs))
+    decided = len(decided_pairs)
+    human_labeled = sum(
+        1 for runs in finished_pairs.values() if any(run.human_verdict is not None for run in runs)
+    )
+    evaluated = sum(
+        1 for runs in finished_pairs.values() if any(run.judge_evaluations > 0 for run in runs)
+    )
+    accepted_runs = [
+        run for runs in decided_pairs.values() for run in runs if _is_accepted(runs, verdict_source)
+    ]
+    accepted_pairs = sum(1 for runs in decided_pairs.values() if _is_accepted(runs, verdict_source))
+    regression_free = sum(
+        1 for runs in decided_pairs.values() if _is_regression_free(runs, verdict_source)
+    )
     automated = sum(1 for runs in finished_pairs.values() if _is_automated_pass(runs))
     # A pair whose patch was never tested cannot be called regression-free either way;
     # PLAN §3.2 excludes it from this rate and publishes the count as a data defect.
-    regression_denominator = reviewed - sum(
-        1 for runs in reviewed_pairs.values() if _heldout_is_missing(runs)
+    regression_denominator = decided - sum(
+        1 for runs in decided_pairs.values() if _heldout_is_missing(runs)
     )
 
     all_runs = [run for runs in finished_pairs.values() for run in runs]
     tokens_total = sum(run.tokens_in + run.tokens_out for run in all_runs)
+    judge_tokens_total = sum(run.judge_tokens_in + run.judge_tokens_out for run in all_runs)
     cost_total = sum((run.cost_list_usd for run in all_runs), Decimal("0"))
+    # Judge cost is reported beside the agent's, never inside it: an accepted fix that
+    # costs two model calls is a different claim from an agent that costs one.
+    judge_cost_total = sum((run.judge_cost_list_usd for run in all_runs), Decimal("0"))
 
     declared = [run for run in all_runs if run.declared_success is not None]
     declared_positive = [run for run in declared if run.declared_success is True]
     # "False completion" is a claim about a pair, so it is counted per pair: two
     # retries of the same rejected pair are one false claim, not two.
     claimed_pairs = [
-        runs
-        for runs in reviewed_pairs.values()
-        if any(run.declared_success is True for run in runs)
+        runs for runs in decided_pairs.values() if any(run.declared_success is True for run in runs)
     ]
-    false_completions = [runs for runs in claimed_pairs if not _is_accepted(runs)]
+    false_completions = [runs for runs in claimed_pairs if not _is_accepted(runs, verdict_source)]
 
     accepted_durations = [run.duration_s for run in accepted_runs if run.duration_s is not None]
     exclusions: dict[str, int] = {}
     for attempt in attempts:
-        if attempt.status in {"infra_failed", "cancelled"}:
+        if attempt.status in EVIDENCE_EXCLUDED_STATUSES:
             exclusions[attempt.status] = exclusions.get(attempt.status, 0) + 1
 
     return MetricsReport(
         agent=agent,
+        verdict_source=verdict_source,
         pairs=pairs,
         accepted=accepted_pairs,
         regression_free_accepted=regression_free,
         automated_pass_pairs=automated,
         declared_success_runs=len(declared_positive),
         tokens_total=tokens_total,
+        judge_tokens_total=judge_tokens_total,
         cost_total=cost_total,
-        reviewed_pairs=reviewed,
-        human_acceptance_rate=accepted_pairs / reviewed if reviewed else None,
-        human_acceptance_ci=wilson_interval(accepted_pairs, reviewed) if reviewed else None,
+        judge_cost_total=judge_cost_total,
+        decided_pairs=decided,
+        human_labeled_pairs=human_labeled,
+        evaluated_pairs=evaluated,
+        acceptance_rate=accepted_pairs / decided if decided else None,
+        acceptance_ci=wilson_interval(accepted_pairs, decided) if decided else None,
         regression_free_acceptance_rate=(
             regression_free / regression_denominator if regression_denominator else None
         ),
@@ -277,23 +342,34 @@ def compute_metrics(attempts: Sequence[Attempt], *, agent: str) -> MetricsReport
         missing_heldout_pairs=sum(
             1 for runs in finished_pairs.values() if _heldout_is_missing(runs)
         ),
-        split=corpus_split(reviewed, accepted_pairs, regression_free),
+        split=corpus_split(decided, accepted_pairs, regression_free),
         exclusions=exclusions,
     )
 
 
-def as_payload(
-    report: MetricsReport, *, cost_basis: str, pricing_version: str | None
-) -> dict[str, object]:
-    """The JSONB payload of a ``metric_snapshots`` row."""
+def _interval_payload(interval: Interval | None) -> dict[str, float] | None:
+    if interval is None:
+        return None
+    return {"low": interval.low, "high": interval.high}
+
+
+def _decimal_payload(value: Decimal | None) -> str | None:
+    return None if value is None else str(value)
+
+
+def as_metrics_block(report: MetricsReport) -> dict[str, object]:
+    """The numbers of one report without the identity fields.
+
+    Used for the whole snapshot and for each group inside it, so a leaderboard reads one
+    shape wherever it looks — and computes nothing itself.
+    """
 
     return {
-        "agent": report.agent,
-        "cost_basis": cost_basis,
-        "pricing_version": pricing_version,
         "denominators": {
             "pairs": report.pairs,
-            "reviewed_pairs": report.reviewed_pairs,
+            "decided_pairs": report.decided_pairs,
+            "human_labeled_pairs": report.human_labeled_pairs,
+            "evaluated_pairs": report.evaluated_pairs,
             "accepted": report.accepted,
             "regression_free_accepted": report.regression_free_accepted,
             "automated_pass_pairs": report.automated_pass_pairs,
@@ -307,38 +383,81 @@ def as_payload(
             "with_regression": report.split.with_regression,
             "not_accepted": report.split.not_accepted,
         },
-        "exclusions": report.exclusions,
         "metrics": {
-            "human_acceptance_rate": report.human_acceptance_rate,
-            "human_acceptance_ci": (
-                None
-                if report.human_acceptance_ci is None
-                else {
-                    "low": report.human_acceptance_ci.low,
-                    "high": report.human_acceptance_ci.high,
-                }
-            ),
+            "acceptance_rate": report.acceptance_rate,
+            "acceptance_ci": _interval_payload(report.acceptance_ci),
             "regression_free_acceptance_rate": report.regression_free_acceptance_rate,
-            "regression_free_acceptance_ci": (
-                None
-                if report.regression_free_acceptance_ci is None
-                else {
-                    "low": report.regression_free_acceptance_ci.low,
-                    "high": report.regression_free_acceptance_ci.high,
-                }
+            "regression_free_acceptance_ci": _interval_payload(
+                report.regression_free_acceptance_ci
             ),
             "task_success_rate": report.task_success_rate,
-            "tokens_per_accepted_fix": (
-                None
-                if report.tokens_per_accepted_fix is None
-                else str(report.tokens_per_accepted_fix)
-            ),
-            "cost_per_accepted_fix": (
-                None if report.cost_per_accepted_fix is None else str(report.cost_per_accepted_fix)
-            ),
+            "tokens_per_accepted_fix": _decimal_payload(report.tokens_per_accepted_fix),
+            "cost_per_accepted_fix": _decimal_payload(report.cost_per_accepted_fix),
             "median_time_to_repair_s": report.median_time_to_repair_s,
             "false_completion_rate": report.false_completion_rate,
             "tokens_total": report.tokens_total,
             "cost_total": str(report.cost_total),
+            # Judge usage is a separate line: the score of a fix and the price of judging
+            # it are two numbers, and a cost per accepted fix that mixed them would answer
+            # neither question.
+            "judge_tokens_total": report.judge_tokens_total,
+            "judge_cost_total": str(report.judge_cost_total),
         },
+    }
+
+
+def as_payload(
+    report: MetricsReport, *, cost_basis: str, pricing_version: str | None
+) -> dict[str, object]:
+    """The JSONB payload of a ``metric_snapshots`` row."""
+
+    return {
+        "agent": report.agent,
+        "cost_basis": cost_basis,
+        "pricing_version": pricing_version,
+        # Which verdict answered "accepted". A snapshot without this key predates V1.1
+        # and is, by definition, a human series.
+        "verdict_source": report.verdict_source.value,
+        **as_metrics_block(report),
+        "exclusions": report.exclusions,
+    }
+
+
+GROUP_KEYS: tuple[str, ...] = ("difficulty",)
+"""The dimensions a leaderboard ranks by that the frozen corpus actually records.
+
+Language and task category are not columns on ``tasks``, and decision 2 froze the corpus:
+adding one would edit a frozen ``task.yaml``. The leaderboard says so instead of inventing
+a grouping it cannot support.
+"""
+
+
+def group_attempts(
+    attempts: Sequence[Attempt], *, key: str = "difficulty"
+) -> dict[str, list[Attempt]]:
+    """Split attempts by one recorded task attribute; a missing value is its own group."""
+
+    if key not in GROUP_KEYS:
+        raise ValueError(f"unknown grouping {key!r}; grouped metrics exist for {GROUP_KEYS}")
+    grouped: dict[str, list[Attempt]] = {}
+    for attempt in attempts:
+        value = getattr(attempt, key, None)
+        label = str(value) if value else "unrecorded"
+        grouped.setdefault(label, []).append(attempt)
+    return grouped
+
+
+def grouped_payload(
+    attempts: Sequence[Attempt], *, agent: str, verdict_source: VerdictSource
+) -> dict[str, dict[str, dict[str, object]]]:
+    """Metrics per recorded dimension, computed here so a leaderboard only orders them."""
+
+    return {
+        key: {
+            label: as_metrics_block(
+                compute_metrics(rows, agent=agent, verdict_source=verdict_source)
+            )
+            for label, rows in sorted(group_attempts(attempts, key=key).items())
+        }
+        for key in GROUP_KEYS
     }

@@ -50,7 +50,8 @@ uv run fixjury verify --run <id>          # fresh container, policy, held-out
 uv run fixjury judge evaluate --run <id> # AI Judge: score, verdict, stored with its evidence
 uv run fixjury bench --agents baseline,mini --verify
 uv run fixjury review pack && uv run fixjury review serve
-uv run fixjury metrics compute --agent baseline
+uv run fixjury metrics compute --agent baseline [--verdict-source judge|human]
+uv run fixjury metrics calibration
 (cd web && npm ci)                        # once, Node 20.9 or newer
 uv run fixjury report --charts && uv run fixjury dashboard
 uv run fixjury export --out docs/export   # raw runs/verdicts/rejections as JSONL + hashed manifest
@@ -88,7 +89,8 @@ src/fixjury/agents/        AgentAdapter protocol + baseline + mini + openhands +
 src/fixjury/sandbox/       container lifecycle, per-run network, tool API, diff capture, egress proxy
 src/fixjury/verify/        check runner, held-out tests, policy, verdict assembly
 src/fixjury/review/        blind batching, rubric, review page (app.py + templates/)
-src/fixjury/metrics/       metric definitions (compute.py), snapshots (service.py), cost
+src/fixjury/metrics/       metric definitions (compute.py), judge calibration (calibration.py),
+                           snapshots (service.py), cost
 src/fixjury/evaluation/    evaluation contracts, structured check evidence, scoring engine
 src/fixjury/judge/         AI Judge: provider, validated reply schema, prompts, modes, aggregation
 src/fixjury/report/        markdown report, charts, the snapshot export the metrics page is built from

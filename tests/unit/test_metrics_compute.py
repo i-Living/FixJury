@@ -6,8 +6,11 @@ import pytest
 
 from fixjury.metrics.compute import (
     Attempt,
+    VerdictSource,
     as_payload,
     compute_metrics,
+    group_attempts,
+    grouped_payload,
     median,
     wilson_interval,
 )
@@ -34,8 +37,8 @@ def test_an_empty_corpus_is_not_a_division_by_zero() -> None:
 
     assert report.pairs == 0
     # An empty corpus has no acceptance rate; zero would claim that nothing passed review.
-    assert report.human_acceptance_rate is None
-    assert report.human_acceptance_ci is None
+    assert report.acceptance_rate is None
+    assert report.acceptance_ci is None
     assert report.tokens_per_accepted_fix is None
     assert report.cost_per_accepted_fix is None
 
@@ -136,7 +139,7 @@ def test_acceptance_counts_pairs_with_any_accepted_attempt() -> None:
 
     assert report.pairs == 2
     assert report.accepted == 1
-    assert report.human_acceptance_rate == 0.5
+    assert report.acceptance_rate == 0.5
 
 
 def test_regression_free_requires_acceptance_and_heldout_evidence() -> None:
@@ -251,7 +254,7 @@ def test_a_pair_whose_heldout_never_ran_leaves_the_regression_free_rate() -> Non
         agent="baseline",
     )
 
-    assert report.reviewed_pairs == 2
+    assert report.decided_pairs == 2
     assert report.missing_heldout_pairs == 1
     assert report.regression_free_accepted == 1
     assert report.regression_free_acceptance_rate == 1.0
@@ -336,3 +339,110 @@ def test_only_finished_runs_count_as_attempts(status: str) -> None:
     report = compute_metrics([attempt("T-1", status=status)], agent="baseline")
 
     assert report.pairs == 0
+
+
+def test_the_judge_is_the_standard_verdict_source() -> None:
+    report = compute_metrics(
+        [attempt("T-1", human_verdict="accept", judge_verdict="REJECTED", judge_evaluations=1)],
+        agent="baseline",
+        verdict_source=VerdictSource.judge,
+    )
+
+    assert report.verdict_source is VerdictSource.judge
+    assert report.accepted == 0
+    assert report.acceptance_rate == 0.0
+
+
+def test_the_human_series_still_reads_human_verdicts() -> None:
+    report = compute_metrics(
+        [attempt("T-1", human_verdict="accept", judge_verdict="REJECTED", judge_evaluations=1)],
+        agent="baseline",
+        verdict_source=VerdictSource.human,
+    )
+
+    assert report.verdict_source is VerdictSource.human
+    assert report.accepted == 1
+
+
+def test_an_unjudged_pair_is_undecided_not_rejected() -> None:
+    """The judge backlog is not a failure rate, exactly as the review backlog was not."""
+
+    report = compute_metrics(
+        [
+            attempt("T-1", judge_verdict="ACCEPTED", judge_evaluations=1),
+            attempt("T-2", judge_verdict=None),
+        ],
+        agent="baseline",
+        verdict_source=VerdictSource.judge,
+    )
+
+    assert report.pairs == 2
+    assert report.decided_pairs == 1
+    assert report.acceptance_rate == 1.0
+
+
+def test_judge_usage_is_reported_beside_the_agent_cost() -> None:
+    report = compute_metrics(
+        [
+            attempt(
+                "T-1",
+                judge_verdict="ACCEPTED",
+                judge_evaluations=1,
+                judge_tokens_in=900,
+                judge_tokens_out=100,
+                judge_cost_list_usd=Decimal("0.25"),
+                cost_list_usd=Decimal("2.0"),
+            )
+        ],
+        agent="baseline",
+        verdict_source=VerdictSource.judge,
+    )
+
+    assert report.tokens_total == 150
+    assert report.judge_tokens_total == 1000
+    assert report.cost_total == Decimal("2.0")
+    assert report.judge_cost_total == Decimal("0.25")
+    # The comparable number stays the agent's: judging is a separate bill.
+    assert report.cost_per_accepted_fix == Decimal("2.0000")
+
+
+def test_the_payload_names_the_source_it_counted() -> None:
+    report = compute_metrics(
+        [attempt("T-1", judge_verdict="ACCEPTED", judge_evaluations=1)],
+        agent="baseline",
+        verdict_source=VerdictSource.judge,
+    )
+
+    payload = as_payload(report, cost_basis="list_price", pricing_version="v")
+
+    assert payload["verdict_source"] == "judge"
+    metrics = payload["metrics"]
+    assert isinstance(metrics, dict)
+    assert "acceptance_rate" in metrics
+    assert "human_acceptance_rate" not in metrics
+    denominators = payload["denominators"]
+    assert isinstance(denominators, dict)
+    assert denominators["decided_pairs"] == 1
+
+
+def test_grouped_metrics_come_from_the_snapshot_not_the_reader() -> None:
+    attempts = [
+        attempt("T-1", difficulty="easy", judge_verdict="ACCEPTED", judge_evaluations=1),
+        attempt("T-2", difficulty="easy", judge_verdict="REJECTED", judge_evaluations=1),
+        attempt("T-3", difficulty="hard", judge_verdict="ACCEPTED", judge_evaluations=1),
+        attempt("T-4", difficulty=None, judge_verdict="ACCEPTED", judge_evaluations=1),
+    ]
+
+    groups = grouped_payload(attempts, agent="baseline", verdict_source=VerdictSource.judge)
+
+    easy = groups["difficulty"]["easy"]
+    assert easy["denominators"]["accepted"] == 1
+    assert easy["metrics"]["acceptance_rate"] == 0.5
+    assert groups["difficulty"]["hard"]["metrics"]["acceptance_rate"] == 1.0
+    # A task without a recorded difficulty is its own bucket, never folded into another.
+    assert groups["difficulty"]["unrecorded"]["denominators"]["pairs"] == 1
+
+
+def test_grouping_outside_the_recorded_dimensions_is_refused() -> None:
+    with pytest.raises(ValueError, match="unknown grouping"):
+        group_attempts([], key="language")

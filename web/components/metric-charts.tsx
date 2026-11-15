@@ -64,8 +64,8 @@ function percentTooltip(item: TooltipItem<"bar">): string {
 export type ChartKind = "acceptance" | "regression_free" | "cost" | "corpus";
 
 function acceptanceChart(agents: AgentSnapshot[]): ChartConfiguration<"bar"> {
-  const intervals = agents.map((agent) => agent.metrics.human_acceptance_ci);
-  const rates = agents.map((agent) => agent.metrics.human_acceptance_rate);
+  const intervals = agents.map((agent) => agent.metrics.acceptance_ci);
+  const rates = agents.map((agent) => agent.metrics.acceptance_rate);
 
   return {
     type: "bar",

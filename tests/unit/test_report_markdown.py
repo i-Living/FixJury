@@ -43,7 +43,10 @@ PAYLOAD: dict[str, object] = {
 def test_the_table_row_carries_every_headline_number() -> None:
     row = render_agent_table(PAYLOAD)
 
-    assert row.startswith("| baseline | 40.0% | 16.8-68.7% | 30.0% | 60.0% | 4/10 |")
+    # A payload written before V1.1 has no verdict_source: it is a human series.
+    assert row.startswith(
+        "| baseline | human (V1 snapshot) | 40.0% | 16.8-68.7% | 30.0% | 60.0% | 4/10 |"
+    )
     assert "1250.00" in row
     assert "0.4000" in row
     assert "42.50 s" in row
@@ -68,7 +71,7 @@ def test_an_unreviewed_corpus_reports_null_acceptance() -> None:
 
     row = render_agent_table(payload)
 
-    assert row.startswith("| baseline | null | null | null | 60.0% | 0/0 |")
+    assert row.startswith("| baseline | human (V1 snapshot) | null | null | null | 60.0% | 0/0 |")
     assert "0.0%" not in row.split("|")[2]
 
 
@@ -93,7 +96,7 @@ def test_the_report_labels_the_cost_basis() -> None:
 
     assert "list price" in text
     assert "not an invoice" in text
-    assert "| Agent | Acceptance | 95% CI |" in text
+    assert "| Agent | Verdict source | Acceptance | 95% CI |" in text
 
 
 def test_the_report_shows_exclusions_and_pricing_version() -> None:
