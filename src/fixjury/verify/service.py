@@ -151,7 +151,13 @@ async def store_verdict(
     if verdict is None:
         verdict = Verdict(run_id=run_id)
         session.add(verdict)
-    await session.execute(delete(Rejection).where(Rejection.run_id == run_id))
+    # Only the automated rejections are this function's to replace: a rejection a reviewer
+    # or a human recorded is part of the review, and re-checking the diff does not answer it.
+    await session.execute(
+        delete(Rejection).where(
+            Rejection.run_id == run_id, Rejection.source == RejectionSource.automated
+        )
+    )
 
     verdict.tests_pass = result.tests_pass
     verdict.lint_pass = result.lint_pass
