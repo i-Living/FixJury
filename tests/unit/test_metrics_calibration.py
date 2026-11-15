@@ -93,8 +93,8 @@ def test_a_pair_the_heldout_never_answered_is_unlabelled_not_a_judge_error() -> 
         ]
     )
 
-    assert report.labeled_pairs == 1
-    assert report.unlabeled_pairs == 1
+    assert report.labeled_runs == 1
+    assert report.unlabeled_runs == 1
     assert report.false_acceptance.of == 0, "no failed pair, no false acceptance to measure"
 
 
@@ -255,5 +255,5 @@ def test_a_judge_that_could_not_decide_is_not_a_rejection() -> None:
     # No decision is no comparison: the pair is neither a hit nor a miss, and it is reported
     # as inconclusive instead of being counted in an error rate it cannot have.
     assert false_rejection([run]).of == 0
-    assert calibrate([run]).labeled_pairs == 0
-    assert calibrate([run]).inconclusive_pairs == 1
+    assert calibrate([run]).labeled_runs == 0
+    assert calibrate([run]).inconclusive_runs == 1

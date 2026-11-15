@@ -62,8 +62,8 @@ export type Judge = {
 /** What the judge did, measured against the held-out labels it did not produce. */
 export type Calibration = {
   reference: string;
-  labeled_pairs: number;
-  unlabeled_pairs: number;
+  labeled_runs: number;
+  unlabeled_runs: number;
   false_acceptance: Rate;
   false_rejection: Rate;
   agreement: Rate;
@@ -152,12 +152,12 @@ function calibrationOf(value: unknown): Calibration | undefined {
     return undefined;
   }
   const block = record(value);
-  // A payload with no labelled pair has numbers the page cannot compare; keep the
+  // A payload with no labelled run has numbers the page cannot compare; keep the
   // block anyway so the table can say "not measured" instead of showing a gap.
   return {
     reference: stringOrNull(block.reference) ?? "held-out suite pass/fail",
-    labeled_pairs: numberOrNull(block.labeled_pairs) ?? 0,
-    unlabeled_pairs: numberOrNull(block.unlabeled_pairs) ?? 0,
+    labeled_runs: numberOrNull(block.labeled_runs) ?? 0,
+    unlabeled_runs: numberOrNull(block.unlabeled_runs) ?? 0,
     false_acceptance: rateOf(block.false_acceptance),
     false_rejection: rateOf(block.false_rejection),
     agreement: rateOf(block.agreement),

@@ -11,6 +11,12 @@ Five numbers leave this module, each with its denominator: false acceptance, fal
 rejection, inter-judge agreement, confidence calibration and escalation frequency. Every
 one of them is ``None`` rather than zero when nothing was measured, and every one of them
 is computed here, once, into the snapshot the report and the page read.
+
+The unit is the **run**, not the pair. A retry is a second run, judged on its own, so it is
+a second piece of evidence about the judge — while acceptance is measured per pair, because
+an agent that retries must not look better than one that does not. The two count different
+things on purpose, and every field here says ``runs`` so a reader cannot take one for the
+other.
 """
 
 from __future__ import annotations
@@ -79,9 +85,9 @@ class CalibrationReport:
     """What the judge did, measured against labels it did not produce."""
 
     reference: str
-    labeled_pairs: int
-    unlabeled_pairs: int
-    inconclusive_pairs: int
+    labeled_runs: int
+    unlabeled_runs: int
+    inconclusive_runs: int
     false_acceptance: Rate
     false_rejection: Rate
     agreement: Rate
@@ -140,7 +146,7 @@ def _judge_verdict(run: Attempt) -> str | None:
 
 
 def _labelled(attempts: Sequence[Attempt]) -> list[Attempt]:
-    """Attempts a judge ruled on and a held-out suite answered."""
+    """Runs a judge ruled on and a held-out suite answered."""
 
     return [
         run
@@ -150,7 +156,7 @@ def _labelled(attempts: Sequence[Attempt]) -> list[Attempt]:
 
 
 def false_acceptance(attempts: Sequence[Attempt]) -> Rate:
-    """Accepted by the judge, failed by the held-out suite.
+    """Accepted by the judge, failed by the held-out suite, counted per run.
 
     The dangerous direction: a patch nobody tested was called fixed. A pair whose held-out
     suite could not run has no label and is not counted either way.
@@ -282,9 +288,9 @@ def calibrate(
     labelled = _labelled(attempts)
     report = CalibrationReport(
         reference=REFERENCE_LABEL,
-        labeled_pairs=len(labelled),
-        unlabeled_pairs=len(evaluated) - len(labelled),
-        inconclusive_pairs=len(evaluated)
+        labeled_runs=len(labelled),
+        unlabeled_runs=len(evaluated) - len(labelled),
+        inconclusive_runs=len(evaluated)
         - sum(1 for run in evaluated if run.judge_verdict in {"ACCEPTED", "REJECTED"}),
         false_acceptance=false_acceptance(attempts),
         false_rejection=false_rejection(attempts),
@@ -310,9 +316,9 @@ def as_calibration_payload(report: CalibrationReport) -> dict[str, object]:
 
     return {
         "reference": report.reference,
-        "labeled_pairs": report.labeled_pairs,
-        "unlabeled_pairs": report.unlabeled_pairs,
-        "inconclusive_pairs": report.inconclusive_pairs,
+        "labeled_runs": report.labeled_runs,
+        "unlabeled_runs": report.unlabeled_runs,
+        "inconclusive_runs": report.inconclusive_runs,
         "false_acceptance": rate(report.false_acceptance),
         "false_rejection": rate(report.false_rejection),
         "agreement": rate(report.agreement),

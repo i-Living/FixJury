@@ -327,7 +327,7 @@ def test_a_judged_snapshot_reads_the_judges_verdict_and_its_calibration() -> Non
 
     calibration = payload["calibration"]
     assert isinstance(calibration, dict)
-    assert calibration["labeled_pairs"] == 2
+    assert calibration["labeled_runs"] == 2
     false_rejection = calibration["false_rejection"]
     assert isinstance(false_rejection, dict)
     assert false_rejection == {"count": 0, "of": 1, "rate": 0.0}

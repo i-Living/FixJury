@@ -142,11 +142,13 @@ def render_calibration_table(payloads: Sequence[Mapping[str, object]]) -> list[s
         "",
         "## Judge calibration",
         "",
-        "The reference label is the held-out suite, which no model produced. A pair the "
-        "held-out suite could not answer has no label and is counted as unlabelled, never "
-        "as a judge mistake.",
+        "The reference label is the held-out suite, which no model produced. Calibration "
+        "counts **runs**, not pairs: a retry is a second run judged on its own, while "
+        "acceptance counts pairs so a retry cannot improve an agent. A run the held-out "
+        "suite could not answer has no label and is counted as unlabelled, never as a judge "
+        "mistake.",
         "",
-        "| Agent | Labelled / unlabelled | False acceptance | False rejection | "
+        "| Agent | Labelled / unlabelled runs | False acceptance | False rejection | "
         "Inter-judge agreement | Brier | Escalation | Within thresholds |",
         "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
@@ -154,7 +156,7 @@ def render_calibration_table(payloads: Sequence[Mapping[str, object]]) -> list[s
         block = _calibration(payload) or {}
         lines.append(
             f"| {payload.get('agent', '?')} "
-            f"| {_count(block.get('labeled_pairs'))} / {_count(block.get('unlabeled_pairs'))} "
+            f"| {_count(block.get('labeled_runs'))} / {_count(block.get('unlabeled_runs'))} "
             f"| {_rate(block.get('false_acceptance'))} "
             f"| {_rate(block.get('false_rejection'))} "
             f"| {_rate(block.get('agreement'))} "

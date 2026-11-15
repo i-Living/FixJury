@@ -292,16 +292,16 @@ export default function Page() {
         <>
           <h2>Judge calibration</h2>
           <p>
-            The reference label is the held-out suite, which no model produced. A pair the
-            held-out suite could not answer has no label and is counted as unlabelled, never as a
-            judge mistake.
+            The reference label is the held-out suite, which no model produced. A run the held-out
+            suite could not answer has no label and is counted as unlabelled, never as a judge
+            mistake. Calibration counts runs, not pairs: a retry is judged on its own.
           </p>
           <div className="scroll">
             <table>
               <thead>
                 <tr>
                   <th>Agent</th>
-                  <th className="num">Labelled / unlabelled</th>
+                  <th className="num">Labelled / unlabelled runs</th>
                   <th className="num">False acceptance</th>
                   <th className="num">False rejection</th>
                   <th className="num">Inter-judge agreement</th>
@@ -320,7 +320,7 @@ export default function Page() {
                       <tr key={agent.agent}>
                         <td className="agent">{agent.agent}</td>
                         <td className="num">
-                          {count(calibration.labeled_pairs)} / {count(calibration.unlabeled_pairs)}
+                          {count(calibration.labeled_runs)} / {count(calibration.unlabeled_runs)}
                         </td>
                         <td className="num">{rateText(calibration.false_acceptance)}</td>
                         <td className="num">{rateText(calibration.false_rejection)}</td>

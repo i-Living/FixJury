@@ -69,9 +69,9 @@ PAYLOADS: list[dict[str, object]] = [
         },
         "calibration": {
             "reference": "held-out suite pass/fail",
-            "labeled_pairs": 4,
-            "unlabeled_pairs": 0,
-            "inconclusive_pairs": 0,
+            "labeled_runs": 4,
+            "unlabeled_runs": 0,
+            "inconclusive_runs": 0,
             "false_acceptance": {"count": 0, "of": 2, "rate": 0.0},
             "false_rejection": {"count": 1, "of": 2, "rate": 0.5},
             "agreement": {"count": 3, "of": 4, "rate": 0.75},
