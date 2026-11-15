@@ -1,9 +1,27 @@
 # FixJury V1.1 — Implementation Plan
 
-**Status:** Proposed
-**Version:** 2.0
-**Based on:** spec.md
+**Status:** Approved — 15 November 2026
+**Version:** 2.1
+**Based on:** [`docs/SPEC_V1.1.md`](SPEC_V1.1.md)
 **Target:** FixJury V1.1
+
+## 0. Approved scope decisions
+
+The owner approved the plan with seven decisions that narrow the scope. They are binding; the reasoning and
+the consequence in the code are recorded in [`docs/architecture/target-state.md`](architecture/target-state.md) §1.
+
+| # | Decision |
+| --- | --- |
+| 1 | No human reviewers in the standard workflow: the AI Judge verdict is the standard verdict source, blind human review stays as an optional calibration channel. |
+| 2 | Corpus expansion is deferred; V1.1 keeps the frozen 32-task corpus. |
+| 3 | The Judge uses the same opencode-go subscription with a different, stronger, configurable model — model separation, not provider separation. |
+| 4 | The Agent Adapter SDK is a wrapper over the existing `AgentAdapter.run()`, not a rewrite of the adapters. |
+| 5 | Checks stay `pytest`, `ruff`, `mypy` plus `coverage`; no security scanners in V1.1. |
+| 6 | GitHub App and Phase 4 (GitHub Review) are deferred out of V1.1. |
+| 7 | Plan approval covers the migrations and dependencies this plan names; anything else still needs its own approval. |
+
+Approved scope by phase: 0 yes, 1 yes, 2 yes, 3 partial (no corpus growth, no new agents), 4 no, 5 partial
+(analytics and attribution yes, repository policies deferred with phase 4), 6 yes, 7 yes.
 
 ## 1. Implementation Strategy
 
@@ -105,6 +123,9 @@ Identify which existing modules can be extended and which require refactoring.
 - docs/architecture/current-state.md
 - docs/architecture/target-state.md
 - docs/architecture/migration-map.md
+
+These documents are written as a *current-state* audit that references `docs/PLAN.md` rather than restating
+it, so the V1 record keeps one home.
 
 ### Acceptance criteria
 
@@ -373,16 +394,15 @@ Make FixJury Benchmark a reproducible platform for comparing AI coding agents.
 
 ### 3.1 Dataset expansion
 
-- Audit existing benchmark tasks.
-- Standardize task metadata.
-- Add difficulty classification.
-- Add task categories.
-- Freeze benchmark revisions.
-- Introduce held-out tests.
-- Record repository licenses.
-- Validate task reproducibility.
+**Deferred by decision 2**: V1.1 keeps the frozen 32-task corpus and adds no tasks. Standardising metadata
+on an existing frozen task would edit `task.yaml`, which AGENTS.md invariant 9 forbids once a run exists, so
+this task reduces to documenting the metadata that is already there and validating it.
 
-Initial target: 100–300 tasks.
+- Audit existing benchmark tasks.
+- Document difficulty classification and task categories as recorded today.
+- Confirm `corpus_version` and the frozen revision used by every leaderboard entry.
+- Record repository licenses (already stored on `tasks.license`).
+- Validate task reproducibility with the no-op baseline check.
 
 ### 3.2 Agent Adapter SDK
 
@@ -450,8 +470,15 @@ Leaderboard entries must reference an immutable benchmark revision and evaluatio
 
 ## 6. Phase 4 — GitHub Review
 
-**Priority:** P0
-**Estimated duration:** 3 weeks
+**Deferred out of V1.1 by decision 6.** No GitHub App, no webhook endpoint, no repository cloning, and none
+of the organization/repository/installation/pull-request tables are created in this release. The only
+obligation V1.1 carries is the one this section's acceptance criteria would have imposed later: the shared
+Evaluation Core must not assume a benchmark-shaped subject, so `evaluation_runs` carries `source` plus a
+nullable `subject_ref` (see `docs/architecture/target-state.md` §8). Re-read this section when the GitHub App
+work is scheduled.
+
+**Priority:** deferred
+**Estimated duration:** 3 weeks when scheduled
 
 ### Objective
 
@@ -555,6 +582,10 @@ Include:
 Provide configurable quality policies and centralized analytics.
 
 ### 5.1 Quality Gates
+
+**Repository-level policies are deferred with Phase 4** (decision 6): without GitHub Review there is no
+repository to gate. V1.1 implements gates over an evaluation configuration — the benchmark/agent profile —
+using the same PASS / FAIL / INCONCLUSIVE outcomes, and reuses them unchanged once a repository policy exists.
 
 Implement repository-level policies:
 
@@ -748,6 +779,9 @@ Ensure visibility into:
 
 Benchmark and GitHub Review can be developed by separate workstreams after the shared core and Judge interfaces stabilize.
 
+With decision 6 the graph shortens: phase 4 is out, phase 5 keeps analytics and attribution, and phase 6
+depends on phases 2–3 and the analytics part of 5.
+
 ## 11. Global Engineering Rules
 
 - Read AGENTS.md before making changes.
@@ -812,7 +846,7 @@ Parallel workstreams may reduce calendar time but do not eliminate integration a
 
 Implementation must follow this sequence:
 
-- Read and understand spec.md.
+- Read and understand [`SPEC_V1.1.md`](SPEC_V1.1.md).
 - Read and understand this implementation plan.
 - Inspect the existing repository.
 - Confirm the task dependencies.

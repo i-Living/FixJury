@@ -1,7 +1,7 @@
 # Spec: FixJury — V1.1
 
-**Status:** Proposed
-**Version:** 1.0
+**Status:** Approved — 15 November 2026
+**Version:** 1.1
 **Product:** Autonomous AI Code Evaluation Platform
 
 ## 1. Objective
@@ -787,20 +787,42 @@ The following features are intentionally excluded from V1.1:
 These decisions must be finalized before implementation planning:
 
 - Which Judge provider should be supported first?
+  **Resolved:** the existing opencode-go subscription, reached through the HTTP helper the platform already
+  uses. The Judge is a separate settings block (`judge_*`), not a second HTTP client.
 - Should Judge use a separate provider from the coding agent by default?
+  **Resolved:** no. It uses the same subscription with a different, stronger and configurable model and its
+  own session. The independence is model and context separation, not provider separation; every report states
+  this limitation.
 - Should AI Judge be allowed to access the target repository's full source code or only relevant files?
+  **Resolved:** relevant files only — task specification, the patch, changed-file paths and sizes, automated
+  check results. Never the full tree, never held-out test source.
 - Should organizations be able to bring their own model API keys?
+  **Resolved:** deferred. V1.1 is single-tenant and reads one key from configuration.
 - Should the initial GitHub integration support private repositories?
+  **Resolved:** deferred with the GitHub App: no GitHub integration ships in V1.1.
 - Which benchmark metrics should be included in the first public leaderboard?
+  **Resolved:** task success rate, regression-free acceptance rate, judge acceptance rate, tokens per accepted
+  fix, cost per accepted fix on both cost bases, median repair time, each with sample size and interval.
+  Per-language and per-difficulty breakdowns are shown only where the frozen corpus has the sample size.
 - What are the default evaluation budgets and confidence thresholds?
+  **Resolved in principle:** defaults live in `config/evaluation.yaml` and are recorded with every result
+  through `config_hash`; adaptive mode, a confidence floor, a bounded judge count and both a token and a
+  monetary budget. The concrete numbers are set in the calibration task (2.7) and are configuration, not
+  code.
 - Should the public benchmark use a fixed Judge model version for all comparisons?
+  **Resolved:** yes. A leaderboard entry records judge model, prompt version and configuration hash; changing
+  any of them starts a new series rather than mixing numbers.
 - What level of Judge calibration is required before publishing official rankings?
+  **Resolved:** the false-acceptance and false-rejection rates must be measured on the frozen corpus before a
+  ranking is published, and the threshold lives in the evaluation configuration so it is visible with the
+  number. A ranking that cannot be calibrated is not published.
 
 ## 20. Specification Approval
 
 This document defines the proposed product scope and requirements for FixJury V1.1.
 
-Implementation must not begin until the specification has been reviewed and approved.
+Approved on 15 November 2026 together with [`PLAN_V1.1.md`](PLAN_V1.1.md) and the seven scope decisions
+recorded in it (§0). Implementation follows the plan's phase order.
 
 After approval, the next phases are:
 
