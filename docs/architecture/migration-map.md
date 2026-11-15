@@ -37,6 +37,8 @@ the PostgreSQL enum types it created (AGENTS.md pitfall: enum types outlive thei
 - indexes: `evaluation_runs(run_id)`, `evaluation_runs(task_id, created_at)`,
   `evaluation_findings(evaluation_run_id, severity)`
 - no column is dropped or rewritten; no historical row is touched
+- `verdicts` gains one additive nullable `check_results` JSONB column: the structured evidence a judge must
+  cite cannot be re-derived from five booleans, and it belongs to the verification, not to one evaluation
 - `evaluation_runs.judge_config_hash` is nullable: phase 1 records the evaluation configuration hash, phase 2
   starts recording a named judge configuration
 
@@ -47,7 +49,8 @@ the PostgreSQL enum types it created (AGENTS.md pitfall: enum types outlive thei
 - `judge_configurations` is created here rather than with the evaluation tables: an empty table nothing writes
   is not a migration, it is a placeholder for a later phase
 
-`verdicts` gains **nothing**: `human_*` / `reviewer_*` keep their V1 meaning. A machine verdict lives in
+`verdicts` keeps its V1 meaning: `human_*` / `reviewer_*` are untouched and a machine verdict never overwrites
+them. What it gains is `check_results`, the structured evidence; the verdict itself lives in
 `evaluation_results`, which is what makes decisions 1 and 6 additive rather than destructive.
 
 **Metric snapshots** are not migrated. `verdict_source` is written into the payload of new snapshots; a
