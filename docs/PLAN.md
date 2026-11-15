@@ -425,6 +425,8 @@ uv run fixjury api --port 8000          # read-only JSON API, loopback by defaul
 
 **4.2 OpenHands адаптер.** То же, другой формат вывода.
 *Проверка:* `fixjury run --task T-001 --agent openhands` даёт `finished` или явный `infra_failed` с причиной.
+Вход — собственный драйвер поверх SDK (`dockerfiles/openhands/`), потому что в линии 1.x нет headless-режима;
+токены и статус берутся из траектории, которую драйвер пишет в рабочем каталоге прогона.
 
 **4.3 Очередь и воркер.** Redis, ретраи (max 2 попытки), `--resume`, запрет дублей по `(task, agent, attempt)`.
 *Проверка:* kill воркера посреди прогона → `--resume` продолжает без дублей.

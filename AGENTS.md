@@ -33,6 +33,8 @@ uv run mypy src                           # types
 docker compose up -d                      # postgres + redis
 docker build -t fixjury-mini:2.4.6 dockerfiles/mini   # the mini harness image
 # then set FIXJURY_MINI_IMAGE=fixjury-mini:2.4.6 and FIXJURY_MINI_VERSION=2.4.6 in .env
+docker build -t fixjury-openhands:1.11.0 dockerfiles/openhands   # the OpenHands harness image
+# then set FIXJURY_OPENHANDS_IMAGE=fixjury-openhands:1.11.0 and FIXJURY_OPENHANDS_VERSION=1.11.0
 uv run alembic upgrade head               # migrations
 uv run fixjury tasks validate benchmarks  # corpus check
 uv run fixjury run --task T-001 --agent baseline
@@ -73,7 +75,7 @@ src/fixjury/run.py         run one agent on one task, record it in runs
 src/fixjury/telemetry.py   OTel spans; the trace id is stored on every run
 src/fixjury/tasks/         task.yaml schema, loader, freeze and validate
 src/fixjury/spec/          RepairSpec generation and rendering
-src/fixjury/agents/        AgentAdapter protocol + baseline + mini + container harness
+src/fixjury/agents/        AgentAdapter protocol + baseline + mini + openhands + container harness
 src/fixjury/sandbox/       container lifecycle, per-run network, tool API, diff capture, egress proxy
 src/fixjury/verify/        check runner, held-out tests, policy, verdict assembly
 src/fixjury/review/        blind batching, rubric, review page (app.py + templates/)
@@ -83,6 +85,7 @@ src/fixjury/export.py      raw runs/verdicts/rejections as JSONL, with a hashed 
 src/fixjury/prompts/       *.md prompt files (English)
 config/pricing.yaml        pinned rates + pricing_version
 dockerfiles/mini/          the mini-swe-agent harness image (one pinned Dockerfile)
+dockerfiles/openhands/     the OpenHands harness image + the headless driver it runs
 benchmarks/tasks/T-xxx/    task.yaml, public fixtures
 benchmarks/heldout/T-xxx/  held-out tests + reference.patch, mounted only in verification
 web/                       read-only metrics page: Next.js app, static export, charts via Chart.js
@@ -156,6 +159,22 @@ These are load-bearing. Breaking one silently invalidates published numbers.
 - **Flaky tasks poison acceptance rates.** Run a no-op baseline (empty diff) against the base commit before the benchmark and drop tasks that fail their own tests.
 - **Never name a top-level directory after a package you import.** A `docker/` folder at the repo root
   made mypy resolve `import docker` to the Dockerfile directory and report the SDK as missing methods.
+- **OpenHands 1.x has no headless flag.** The `openhands` console script was the terminal UI and the
+  GUI launcher, and both want a terminal a sandbox does not have — `openhands-ai` 1.11.0 ships no CLI
+  entry point at all. The image runs this repository's `openhands_driver.py` on the SDK instead; the
+  driver is the only place that knows the SDK's API, so a version bump means re-checking it.
+- **`openhands-ai` resolves an ACP client the SDK cannot import.** 1.11.0 accepts
+  `agent-client-protocol` 1.0.0, whose package no longer has `acp.helpers`, and the SDK fails on
+  `import openhands.sdk` — an install that "succeeded" and cannot start. `dockerfiles/openhands`
+  pins 0.10.1 next to it; drop that line only after checking the import.
+- **The OpenHands default tool set needs Chromium.** It includes a browser tool that refuses to start
+  without it, so a run dies before the agent reads the task file. The driver asks for the default
+  tools with `enable_browser=False`; a sandbox with no route out has no use for a browser anyway.
+- **OpenHands reports a spent step ceiling as `ERROR`.** `LocalConversation.run()` sets
+  `execution_status = ERROR` with the code `MaxIterationsReached` when the iteration limit is reached
+  without a `finished` declaration, so reading the status alone turns every truncated run into a crash.
+  The driver maps that code to its own `step_limit` status and writes the code into the trajectory; the
+  adapter then reports "harness stopped with status step_limit: …" instead of a bare "error".
 - **mini-swe-agent interviews you on first run.** Without `MSWEA_CONFIGURED=1` it tries to read a
   model and a key from stdin, which a sandbox does not have, and the run dies as `infra_failed`. The
   harness sets it, along with `HOME=/tmp`: the root filesystem is read-only and mini writes a last-run

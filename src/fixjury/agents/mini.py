@@ -23,13 +23,16 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import stat
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
-
 from fixjury.agents.base import LlmConfig
+from fixjury.agents.model_names import litellm_model
+from fixjury.agents.trajectory import (
+    MAX_TRAJECTORY_BYTES,
+    HarnessRun,
+    as_int,
+    read_json_object,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -41,9 +44,6 @@ DEFAULT_CONFIG = "mini.yaml"
 TRAJECTORY_FORMAT = "mini-swe-agent"
 # mini writes this once the agent issued its finish command.
 SUCCESS_STATUS = "Submitted"
-# A run of a handful of model calls writes kilobytes. The cap only has to be well
-# above that, and well below what would hurt the worker.
-MAX_TRAJECTORY_BYTES = 8 * 1024 * 1024
 
 # mini resolves a bare config name against the working directory before its own
 # package directory, so `-c mini.yaml` inside a target repository would load a file
@@ -68,20 +68,6 @@ ENV: tuple[tuple[str, str], ...] = (
     ("HOME", "/tmp"),  # noqa: S108 - inside the run's container
     ("MSWEA_COST_TRACKING", "ignore_errors"),
 )
-
-
-def litellm_model(model: str) -> str:
-    """Name the model the way litellm needs it: with a provider prefix.
-
-    mini reaches the model through litellm, which refuses a bare ``deepseek-v4.1-flash``
-    with "LLM Provider NOT provided" because it cannot tell which API to call. Our
-    endpoint is OpenAI-compatible, so an unprefixed name means ``openai/``; a name
-    that already carries a provider is left as it is.
-    """
-
-    if not model:
-        return ""
-    return model if "/" in model else f"openai/{model}"
 
 
 def config_text(llm: LlmConfig | None, max_steps: int) -> str:
@@ -123,56 +109,9 @@ def config_text(llm: LlmConfig | None, max_steps: int) -> str:
     return "\n".join(lines) + "\n"
 
 
-class MiniRun(BaseModel):
-    """What mini's own trajectory says about one run."""
-
-    model_config = ConfigDict(frozen=True)
-
-    tokens_in: int
-    tokens_out: int
-    steps: int
-    exit_status: str
-
-
-def _read_bounded(path: Path) -> bytes | None:
-    """Read a regular file without following a symlink and without trusting its size.
-
-    The trajectory is written by the agent, inside a container, and read here with
-    the worker's own privileges. A symlink to ``/dev/zero`` or to a file on the host
-    must be refused, not followed, and a file whose reported size lies must not be
-    read past the cap. ``O_NONBLOCK`` matters as much as ``O_NOFOLLOW``: opening a
-    FIFO read-only waits for a writer, so the size check would never get a turn and
-    the agent could park the worker.
-    """
-
-    try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    except OSError as exc:
-        LOGGER.warning("mini trajectory at %s is unreadable: %s", path, exc)
-        return None
-    try:
-        info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode):
-            LOGGER.warning("mini trajectory at %s is not a regular file", path)
-            return None
-        if info.st_size > MAX_TRAJECTORY_BYTES:
-            LOGGER.warning(
-                "mini trajectory at %s is %d bytes, over the %d cap",
-                path,
-                info.st_size,
-                MAX_TRAJECTORY_BYTES,
-            )
-            return None
-        raw = os.read(fd, MAX_TRAJECTORY_BYTES + 1)
-    except OSError as exc:
-        LOGGER.warning("mini trajectory at %s is unreadable: %s", path, exc)
-        return None
-    finally:
-        os.close(fd)
-    if len(raw) > MAX_TRAJECTORY_BYTES:
-        LOGGER.warning("mini trajectory at %s grew past the cap while reading", path)
-        return None
-    return raw
+# The trajectory model is shared with the other container harnesses: what mini
+# records and what the OpenHands driver records answer the same four questions.
+MiniRun = HarnessRun
 
 
 def read_run(path: Path) -> MiniRun | None:
@@ -183,16 +122,8 @@ def read_run(path: Path) -> MiniRun | None:
     the caller logs that instead of inventing numbers.
     """
 
-    raw = _read_bounded(path)
-    if raw is None:
-        return None
-    try:
-        payload = json.loads(raw)
-    except ValueError as exc:
-        LOGGER.warning("mini trajectory at %s is not JSON: %s", path, exc)
-        return None
-    if not isinstance(payload, dict):
-        LOGGER.warning("mini trajectory at %s is not an object", path)
+    payload = read_json_object(path, "mini")
+    if payload is None:
         return None
     if not str(payload.get("trajectory_format", "")).startswith(TRAJECTORY_FORMAT):
         LOGGER.warning("mini trajectory at %s is not a mini trajectory", path)
@@ -221,8 +152,8 @@ def read_run(path: Path) -> MiniRun | None:
         usage = response.get("usage")
         if not isinstance(usage, dict):
             continue
-        tokens_in += _as_int(usage.get("prompt_tokens"))
-        tokens_out += _as_int(usage.get("completion_tokens"))
+        tokens_in += as_int(usage.get("prompt_tokens"))
+        tokens_out += as_int(usage.get("completion_tokens"))
 
     raw_info = payload.get("info")
     info: dict[str, object] = raw_info if isinstance(raw_info, dict) else {}
@@ -231,13 +162,9 @@ def read_run(path: Path) -> MiniRun | None:
     return MiniRun(
         tokens_in=tokens_in,
         tokens_out=tokens_out,
-        steps=_as_int(stats.get("api_calls")),
+        steps=as_int(stats.get("api_calls")),
         exit_status=str(info.get("exit_status", "")),
     )
-
-
-def _as_int(value: object) -> int:
-    return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
 __all__ = [
@@ -245,6 +172,7 @@ __all__ = [
     "CONFIG_FILENAME",
     "ENV",
     "HARNESS",
+    "MAX_TRAJECTORY_BYTES",
     "SUCCESS_STATUS",
     "TRAJECTORY_FILENAME",
     "MiniRun",

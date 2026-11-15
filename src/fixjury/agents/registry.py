@@ -5,7 +5,7 @@ from __future__ import annotations
 import shlex
 from collections.abc import Callable
 
-from fixjury.agents import mini
+from fixjury.agents import mini, openhands
 from fixjury.agents.base import AgentAdapter
 from fixjury.agents.baseline import BaselineAdapter
 from fixjury.agents.container_harness import ContainerHarnessAdapter, HarnessSpec
@@ -23,7 +23,7 @@ ADAPTERS: dict[str, Callable[[], AgentAdapter]] = {
 # Third-party harnesses run inside a container. Their image, command and version
 # are configuration: an empty image means "not pinned yet", and the adapter says
 # so instead of pulling a tag nobody chose.
-HARNESSES = (mini.HARNESS, "openhands")
+HARNESSES = (mini.HARNESS, openhands.HARNESS)
 
 
 def harness_spec(name: str) -> HarnessSpec:
@@ -43,21 +43,27 @@ def harness_spec(name: str) -> HarnessSpec:
             config_text=mini.config_text,
             trajectory_file=mini.TRAJECTORY_FILENAME,
             trajectory_success_status=mini.SUCCESS_STATUS,
+            read_trajectory=mini.read_run,
         )
-    if name == "openhands":
+    if name == openhands.HARNESS:
         image, command, version = (
             settings.openhands_image,
             settings.openhands_command,
             settings.openhands_version,
         )
-    else:
-        raise UnknownAgentError(f"no harness named {name!r}")
-    return HarnessSpec(
-        name=name,
-        version=version or "unpinned",
-        image=image,
-        command=tuple(shlex.split(command)) if command else (),
-    )
+        return HarnessSpec(
+            name=name,
+            version=version or "unpinned",
+            image=image,
+            command=tuple(shlex.split(command)) if command else openhands.COMMAND,
+            env=openhands.ENV,
+            config_file=openhands.CONFIG_FILENAME,
+            config_text=openhands.config_text,
+            trajectory_file=openhands.TRAJECTORY_FILENAME,
+            trajectory_success_status=openhands.SUCCESS_STATUS,
+            read_trajectory=openhands.read_run,
+        )
+    raise UnknownAgentError(f"no harness named {name!r}")
 
 
 def build_adapter(name: str) -> AgentAdapter:

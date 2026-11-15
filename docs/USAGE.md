@@ -98,6 +98,34 @@ FIXJURY_MINI_VERSION=2.4.6
 Версию в теге и в `FIXJURY_MINI_VERSION` меняют **вместе** с пином в Dockerfile: прогоны под разными
 версиями харнесса несравнимы, и это должно быть видно в данных, а не в чьей-то памяти.
 
+### 3.3 Образ OpenHands
+
+У OpenHands 1.x **нет headless-режима**: команда `openhands` была терминальным интерфейсом и
+лаунчером GUI, а в `openhands-ai` 1.11.0 консольной команды нет вовсе. Поэтому образ несёт собственный
+вход (`dockerfiles/openhands/openhands_driver.py`), который собирает того же агента на SDK и прогоняет
+его по `TASK.md`.
+
+```bash
+docker build -t fixjury-openhands:1.11.0 dockerfiles/openhands
+```
+
+Затем в `.env`:
+
+```dotenv
+FIXJURY_OPENHANDS_IMAGE=fixjury-openhands:1.11.0
+FIXJURY_OPENHANDS_VERSION=1.11.0
+```
+
+В Dockerfile два пина, и оба обязательны: `openhands-ai==1.11.0` и `agent-client-protocol==0.10.1`.
+Без второго `pip` ставит ACP 1.0.0, где нет модуля `acp.helpers`, и `import openhands.sdk` падает —
+установка «успешна», а харнесс не стартует. Браузерного инструмента в образе нет: набор инструментов
+OpenHands по умолчанию включает браузер, который без Chromium не поднимается и убивает прогон до
+чтения задачи; драйвер просит набор без браузера.
+
+Токены и статус берутся из траектории, которую пишет драйвер (`fixjury-trajectory.json`): суммы из
+метрик SDK, `exit_status` — финальный статус диалога. Прогон, остановленный на лимите шагов,
+приходит со статусом `paused` и **не** считается заявленным успехом.
+
 ---
 
 ## 4. Рабочий цикл целиком
@@ -504,6 +532,9 @@ docker network ls --filter "name=fixjury" --format '{{.Name}}'
 | Симптом | Причина | Что делать |
 | --- | --- | --- |
 | `mini has no pinned image; set the image and version before running it` | пустой `FIXJURY_MINI_IMAGE` | собрать образ (3.2) и заполнить `.env` |
+| `openhands has no pinned image; set the image and version before running it` | пустой `FIXJURY_OPENHANDS_IMAGE` | собрать образ (3.3) и заполнить `.env` |
+| `ModuleNotFoundError: No module named 'acp.helpers'` в прогоне `openhands` | образ собран без пина `agent-client-protocol==0.10.1` | пересобрать из `dockerfiles/openhands` (3.3) |
+| `Chromium is required for browser operations but is not installed` | образ запускает набор инструментов OpenHands по умолчанию, с браузером | не переопределять команду образом без драйвера: драйвер просит набор без браузера |
 | Прогон `infra_failed` без внятной причины, модель не отвечает | для opencode-go не задан `FIXJURY_LLM_SESSION` | заполнить заголовок `x-opencode-session` |
 | `git clone failed: …` / долгий первый прогон | нет сети до github.com или пустой кэш зеркал | проверить сеть, задать `FIXJURY_CHECKOUT_CACHE` |
 | `not a run id: '…'` | в `--run` передан не UUID | взять `id` из вывода `fixjury run` или из `runs` |

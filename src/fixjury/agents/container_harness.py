@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 from fixjury.agents.base import AgentResult, LlmConfig, RunRequest
-from fixjury.agents.mini import MiniRun, read_run
+from fixjury.agents.trajectory import HarnessRun
 from fixjury.sandbox.container import SandboxSpec, open_sandbox
 from fixjury.sandbox.diff import UnreadableDiff, capture_diff
 from fixjury.sandbox.network import open_run_network
@@ -56,9 +56,11 @@ class HarnessSpec:
     config_file: str = ""
     config_text: Callable[[LlmConfig | None, int], str] | None = None
     # A harness that records its own trajectory can report tokens and whether it
-    # submitted; without one every third-party agent claims zero tokens.
+    # submitted; without one every third-party agent claims zero tokens. The reader
+    # is part of the spec because each harness writes its own format.
     trajectory_file: str = ""
     trajectory_success_status: str = ""
+    read_trajectory: Callable[[Path], HarnessRun | None] | None = None
 
     def validate(self) -> None:
         if not self.image:
@@ -69,6 +71,8 @@ class HarnessSpec:
             raise HarnessError(f"{self.name} has no command to run inside its image")
         if self.config_file and self.config_text is None:
             raise HarnessError(f"{self.name} has a config file but no function to write it")
+        if self.trajectory_file and self.read_trajectory is None:
+            raise HarnessError(f"{self.name} names a trajectory file but no function to read it")
 
 
 def llm_target(llm: LlmConfig | None) -> str | None:
@@ -158,12 +162,13 @@ class ContainerHarnessAdapter:
                 await proxy.stop()
         lifetime = Decimal(str(round(time.monotonic() - started, 2)))
 
-        # mini's trajectory is read before cleanup: it carries the token counts and
-        # whether the agent submitted. A missing or broken file is not a failed
+        # The harness's trajectory is read before cleanup: it carries the token counts
+        # and whether the agent submitted. A missing or broken file is not a failed
         # run, only a run whose token columns stay zero.
-        trail: MiniRun | None = None
-        if self.spec.trajectory_file:
-            trail = read_run(workspace / self.spec.trajectory_file)
+        trail: HarnessRun | None = None
+        read_trail = self.spec.read_trajectory
+        if self.spec.trajectory_file and read_trail is not None:
+            trail = read_trail(workspace / self.spec.trajectory_file)
         elif self.spec.trajectory_success_status:
             LOGGER.warning("%s asks for a success status but has no trajectory", self.spec.name)
 
@@ -293,7 +298,7 @@ def workspace_for_run(prefix: str = "fixjury-harness-") -> Path:
 def outcome(
     exit_code: int,
     diff_is_empty: bool,
-    trail: MiniRun | None,
+    trail: HarnessRun | None,
     success_status: str,
 ) -> tuple[bool, str | None]:
     """Did the harness declare success, and if not, what does the run say?
@@ -310,7 +315,12 @@ def outcome(
     if success_status:
         declared = declared and trail is not None and trail.exit_status == success_status
         if trail is not None and trail.exit_status != success_status:
-            return False, f"harness stopped with status {trail.exit_status or 'unknown'}"
+            # A harness that explains itself is worth reading: without the note the
+            # reason says "error" and nothing about why.
+            reason = f"harness stopped with status {trail.exit_status or 'unknown'}"
+            if trail.notes:
+                reason = f"{reason}: {trail.notes}"
+            return False, reason
     return declared, None
 
 
