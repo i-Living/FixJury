@@ -45,7 +45,15 @@ pytestmark = pytest.mark.integration
 CORPUS = Path(__file__).resolve().parents[2] / "benchmarks"
 PROFILE_PATH = Path(__file__).resolve().parents[2] / "config" / "evaluation.yaml"
 GATES_PATH = Path(__file__).resolve().parents[2] / "config" / "quality.yaml"
-DIFF = "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n-broken\n+fixed\n"
+DIFF = (
+    "diff --git a/loguru/_colorizer.py b/loguru/_colorizer.py\n"
+    "--- a/loguru/_colorizer.py\n"
+    "+++ b/loguru/_colorizer.py\n"
+    "@@ -1 +1 @@\n"
+    "-broken\n"
+    "+fixed\n"
+    "+also fine\n"
+)
 OUTCOMES = (
     CheckOutcome(command="pytest tests", tool=CheckTool.pytest, exit_code=0, output="4 passed"),
     CheckOutcome(
