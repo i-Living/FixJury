@@ -29,20 +29,26 @@ V1 is deleted; the benchmark that is mid-flight stays runnable while V1.1 lands.
 One Alembic revision per coherent group, each with a working `downgrade()` that drops indexes, tables and
 the PostgreSQL enum types it created (AGENTS.md pitfall: enum types outlive their tables).
 
-**Revision `0003_evaluation_core`**
+**Revision `0003_verdict_evidence`**
 
-- enums: `evaluation_source`, `evaluation_status`, `evaluation_verdict`, `finding_severity`,
-  `finding_category`, `finding_source`, `judge_mode`
+- `verdicts` gains one additive `check_results` JSONB column, defaulting to an empty list: the structured
+  evidence a judge must cite cannot be re-derived from five booleans, and it belongs to the verification
+  rather than to one evaluation. Old rows carry `[]`, which says "verified before this column existed"
+  instead of pretending the checks printed nothing.
+- no table is touched otherwise; no historical row is rewritten.
+
+**Revision `0004_evaluation_core`**
+
+- enums: `evaluation_source`, `evaluation_status`, `evaluation_verdict`, `criterion`, `finding_severity`,
+  `finding_source`
 - tables: `evaluation_runs`, `evaluation_results`, `evaluation_findings`
-- indexes: `evaluation_runs(run_id)`, `evaluation_runs(task_id, created_at)`,
+- indexes: `evaluation_runs(run_id)`, `evaluation_runs(source, subject_ref, created_at)`,
   `evaluation_findings(evaluation_run_id, severity)`
-- no column is dropped or rewritten; no historical row is touched
-- `verdicts` gains one additive nullable `check_results` JSONB column: the structured evidence a judge must
-  cite cannot be re-derived from five booleans, and it belongs to the verification, not to one evaluation
 - `evaluation_runs.judge_config_hash` is nullable: phase 1 records the evaluation configuration hash, phase 2
   starts recording a named judge configuration
+- no column is dropped or rewritten; no historical row is touched
 
-**Revision `0004_judge_assessments`**
+**Revision `0005_judge_assessments`**
 
 - tables: `judge_configurations`, `judge_assessments`, `judge_escalations`
 - indexes: `judge_assessments(evaluation_run_id)`, `judge_escalations(evaluation_run_id)`
@@ -69,8 +75,12 @@ run (agent)
 ```
 
 `fixjury verify` keeps working alone: without a judge configured, the evaluation step is skipped and the V1
-pipeline renders exactly as today. `fixjury judge evaluate --run <id>` can be run later against the persisted
-verdict — a judge never re-runs an agent.
+pipeline renders exactly as today. `fixjury judge evaluate --run <id>` works only against a verdict that
+carries `check_results`: a judge never re-runs an agent, and it never evaluates nothing. A run verified before
+revision `0003_verdict_evidence` has five booleans and no stored check output, so it is reported as
+**unevaluable** and no `evaluation_results` row is written. Re-running `fixjury verify` on that run rewrites
+its verdict with the structured outcomes, and the evaluation can then proceed — that is the backfill, and it
+is explicit rather than silent.
 
 ## 4. Ordered tasks
 
@@ -84,7 +94,7 @@ demonstrate before the next one starts.
 | 1.2a | coverage as a whitelisted tool | `tasks/schema.py`, `tests/unit/test_task_schema.py` | `coverage` parses; unknown flags still refused; no corpus file edited |
 | 1.2b | structured check results | `evaluation/checks.py`, `verify/verdict.py`, `verify/runner.py`, unit tests | outcomes become `CheckResult`; `SKIPPED` is distinct from `PASSED`; existing booleans unchanged |
 | 1.3 | scoring engine and profiles | `evaluation/scoring.py`, `config/evaluation.yaml`, `tests/unit/test_evaluation_scoring.py` | weights sum to 100; critical failure denies acceptance; deterministic ordering; profile version stored |
-| 1.4 | persistence | `models.py`, `migrations/versions/0003…`, `evaluation/store.py`, `tests/integration/test_evaluation_store.py` | round-trip of a result with findings; downgrade/upgrade on a clean database; enum types dropped by downgrade |
+| 1.4 | persistence | `models.py`, `migrations/versions/0004_evaluation_core.py`, `evaluation/store.py`, `tests/integration/test_evaluation_store.py` | round-trip of a result with findings; downgrade/upgrade on a clean database; enum types dropped by downgrade |
 | 2.1 | judge provider | `judge/provider.py`, `judge/schema.py`, settings, unit tests with a fake transport | response validated; malformed response refused; usage recorded |
 | 2.2 | judge evaluator | `judge/evaluator.py`, `judge/prompts/judge_evaluate.md`, unit tests | context excludes held-out source and agent identity; prompt version recorded; evidence references validated |
 | 2.3 | modes | `judge/modes.py`, unit tests | single reaches a verdict; adaptive escalates on the configured triggers; multi detects disagreement |
@@ -95,6 +105,7 @@ demonstrate before the next one starts.
 | 3.2 | adapter SDK wrapper | `agents/sdk.py`, unit tests | five lifecycle methods over `run()`; adapters unchanged; no DB or global config access |
 | 3.4 | orchestration | `bench.py`, `worker.py`, `cli.py`, integration test | `bench --verify` optionally evaluates; a judge failure marks the evaluation failed, never the run |
 | 3.5 | leaderboard | `leaderboard/`, `cli.py`, tests | entries reference `corpus_version`, `config_hash`, judge config, sample size |
+| 5.1 | quality gates | `evaluation/gates.py`, `cli.py`, tests | a stored evaluation yields `PASS`/`FAIL`/`INCONCLUSIVE`; a confirmed automated failure can never pass; `INCONCLUSIVE` is its own outcome, never a pass; repository-level policy waits for phase 4 |
 | 5.2 | analytics | `metrics/`, API, tests | history, agent performance, cost, escalation statistics from snapshots and evaluations |
 | 5.3 | agent attribution | adapters metadata, tests | unknown attribution stays explicitly unknown |
 | 6.1–6.2 | API and dashboard | `api/`, `web/`, tests + typecheck | evaluation endpoints and pages; existing pages unchanged |

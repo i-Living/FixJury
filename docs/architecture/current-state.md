@@ -190,7 +190,7 @@ smallest safe change and is expanded in [`migration-map.md`](migration-map.md).
 | --- | --- | --- | --- |
 | 1 | `verdicts` is one human-centric checklist row keyed by `run_id` | V1.1 needs machine verdicts with scores, findings, confidence | Add evaluation tables; keep `verdicts` as the automated/human record; never rewrite history |
 | 2 | Nothing persists per-criterion scores, findings or judge identity | §3.1 evaluation core, §4.5 judge output | New `evaluation_*` / `judge_*` tables; criterion scores in `evaluation_results` |
-| 3 | `CheckOutcome` evidence is discarded after verification | Judge must cite evidence (§3.2, §4.5) | Persist structured check outcomes as `evaluation_findings` / artifacts, not free text |
+| 3 | `CheckOutcome` evidence is discarded after verification | Judge must cite evidence (§3.2, §4.5) | Persist the outcomes as `verdicts.check_results` (revision `0003_verdict_evidence`), output tail included; an `EvaluationFinding` cites a check by `evidence_ref`, it does not copy its fields |
 | 4 | No coverage measurement; `CheckTool` = pytest, ruff, mypy | §1.2 coverage analysis | Whitelist `coverage`; parse its report into a check result; task files stay unchanged |
 | 5 | No security scanner; security can only be judged, not verified | §5 critical failures | Record security findings as judge findings with evidence and never as confirmed automated failures |
 | 6 | `llm.py` is a single call helper with a provider-specific session header | §4.1 judge provider abstraction | Wrap it in a `JudgeProvider` protocol; keep the HTTP code in one place |

@@ -118,10 +118,13 @@ Rules that the contracts must enforce, not merely document:
   it: exhausting a budget yields `INCONCLUSIVE`, never acceptance.
 - Observability per assessment: provider, model, prompt version, configuration hash, input/output tokens,
   cost with `pricing_version`, latency, confidence, escalation history, final verdict.
-- Calibration: the frozen 32-task corpus plus every reviewed pair is the calibration set; false acceptance,
-  false rejection, agreement, confidence calibration and escalation frequency are computed in
-  `metrics/compute.py` from persisted rows. With decision 1 the reference labels are automated checks first
-  and human verdicts where they exist — the absence of human labels is reported, never papered over.
+- Calibration: the frozen 32-task corpus plus every reviewed pair is the calibration set. Rates are measured
+  against **independently verified labels** — a passed check is not a label, because a patch that passes the
+  checks can still be wrong. With decision 1 those labels are sparse: false acceptance and false rejection are
+  computed only over cases with an independent label (a human verdict or a reference patch that differs from
+  what the agent wrote), and unlabeled cases are counted, excluded from the rate and reported as excluded.
+  A judge that accepts an unlabeled patch is not scored as correct. Agreement, confidence calibration and
+  escalation frequency are computed in `metrics/compute.py` from persisted rows.
 
 ## 7. Verification pipeline additions
 
