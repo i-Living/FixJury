@@ -119,12 +119,13 @@ Rules that the contracts must enforce, not merely document:
 - Observability per assessment: provider, model, prompt version, configuration hash, input/output tokens,
   cost with `pricing_version`, latency, confidence, escalation history, final verdict.
 - Calibration: the frozen 32-task corpus plus every reviewed pair is the calibration set. Rates are measured
-  against **independently verified labels** — a passed check is not a label, because a patch that passes the
-  checks can still be wrong. With decision 1 those labels are sparse: false acceptance and false rejection are
-  computed only over cases with an independent label (a human verdict or a reference patch that differs from
-  what the agent wrote), and unlabeled cases are counted, excluded from the rate and reported as excluded.
-  A judge that accepts an unlabeled patch is not scored as correct. Agreement, confidence calibration and
-  escalation frequency are computed in `metrics/compute.py` from persisted rows.
+  against **independently verified labels** only. Neither a passing check nor a difference from the reference
+  patch is a label: a correct patch can differ from the reference and an incorrect one can too, and a patch
+  that passes its tests can still be wrong. With decision 1 the labels are sparse, so false acceptance and
+  false rejection are computed only over cases that carry one (a human verdict on that exact pair, or a
+  curated label), and unlabeled cases are counted, excluded from the rate and reported as excluded. A judge
+  that accepts an unlabeled patch is not scored as correct. Agreement, confidence calibration and escalation
+  frequency are computed in `metrics/compute.py` from persisted rows.
 
 ## 7. Verification pipeline additions
 

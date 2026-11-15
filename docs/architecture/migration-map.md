@@ -79,8 +79,9 @@ pipeline renders exactly as today. `fixjury judge evaluate --run <id>` works onl
 carries `check_results`: a judge never re-runs an agent, and it never evaluates nothing. A run verified before
 revision `0003_verdict_evidence` has five booleans and no stored check output, so it is reported as
 **unevaluable** and no `evaluation_results` row is written. Re-running `fixjury verify` on that run rewrites
-its verdict with the structured outcomes, and the evaluation can then proceed — that is the backfill, and it
-is explicit rather than silent.
+the automated evidence — and only that: `store_verdict` updates the row in place, so a human verdict, its
+reviewer and its batch survive the re-verification. That is the backfill, and it is explicit rather than
+silent.
 
 ## 4. Ordered tasks
 
@@ -92,7 +93,7 @@ demonstrate before the next one starts.
 | 0.1–0.3 | audit, architecture mapping, compatibility analysis | `docs/architecture/*` | this document set; no production code changed |
 | 1.1 | evaluation contracts | `evaluation/contracts.py`, `tests/unit/test_evaluation_contracts.py` | schema version enforced; judge finding without evidence refused; `confirmed` refused on judge findings |
 | 1.2a | coverage as a whitelisted tool | `tasks/schema.py`, `tests/unit/test_task_schema.py` | `coverage` parses; unknown flags still refused; no corpus file edited |
-| 1.2b | structured check results | `evaluation/checks.py`, `verify/verdict.py`, `verify/runner.py`, unit tests | outcomes become `CheckResult`; `SKIPPED` is distinct from `PASSED`; existing booleans unchanged |
+| 1.2b | structured check results | `evaluation/checks.py`, `verify/verdict.py`, `verify/service.py`, `migrations/versions/0003_verdict_evidence.py`, unit + integration tests | outcomes become `CheckResult` and are written to `verdicts.check_results` (revision `0003_verdict_evidence`); `ERROR` is distinct from `FAILED`; re-verification preserves the review fields, so it is the backfill for older runs |
 | 1.3 | scoring engine and profiles | `evaluation/scoring.py`, `config/evaluation.yaml`, `tests/unit/test_evaluation_scoring.py` | weights sum to 100; critical failure denies acceptance; deterministic ordering; profile version stored |
 | 1.4 | persistence | `models.py`, `migrations/versions/0004_evaluation_core.py`, `evaluation/store.py`, `tests/integration/test_evaluation_store.py` | round-trip of a result with findings; downgrade/upgrade on a clean database; enum types dropped by downgrade |
 | 2.1 | judge provider | `judge/provider.py`, `judge/schema.py`, settings, unit tests with a fake transport | response validated; malformed response refused; usage recorded |
