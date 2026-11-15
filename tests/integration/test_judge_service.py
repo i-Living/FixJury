@@ -17,7 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fixjury.db import make_engine
 from fixjury.evaluation.checks import stored_outcomes
 from fixjury.evaluation.contracts import EvaluationConfiguration, EvaluationResult, JudgeMode
+from fixjury.evaluation.gates import evaluate_gates, load_policy
 from fixjury.evaluation.scoring import load_profile
+from fixjury.evaluation.service import build_request
 from fixjury.evaluation.store import load_evaluation
 from fixjury.judge.modes import JudgeSetup
 from fixjury.judge.provider import ProviderResponse
@@ -42,6 +44,7 @@ pytestmark = pytest.mark.integration
 
 CORPUS = Path(__file__).resolve().parents[2] / "benchmarks"
 PROFILE_PATH = Path(__file__).resolve().parents[2] / "config" / "evaluation.yaml"
+GATES_PATH = Path(__file__).resolve().parents[2] / "config" / "quality.yaml"
 DIFF = "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n-broken\n+fixed\n"
 OUTCOMES = (
     CheckOutcome(command="pytest tests", tool=CheckTool.pytest, exit_code=0, output="4 passed"),
@@ -367,3 +370,42 @@ def test_a_scoring_failure_keeps_the_usage_of_the_calls_that_ran() -> None:
     # price in the pinned table, so the number can be zero — but it is the same zero the
     # assessment reported, not a total invented at the store.
     assert Decimal(str(assessments[0]["cost_list_usd"])) == cost
+
+
+def test_a_stored_evaluation_passes_the_shipped_quality_gates() -> None:
+    """The gates read what the judge and the checks recorded, end to end."""
+
+    require_postgres()
+
+    async def scenario() -> tuple[str, str, list[str]]:
+        async with rolled_back_session() as session:
+            run = await add_verified_run(session)
+            judged = await evaluate_run(
+                session,
+                run_id=run.id,
+                corpus_root=CORPUS,
+                config=EvaluationConfiguration(mode=JudgeMode.single),
+                setup=setup(FakeProvider([reply()])),
+                profile=load_profile(PROFILE_PATH),
+            )
+            request = await build_request(
+                session, run_id=run.id, corpus_root=CORPUS, config=judged.evaluation.config
+            )
+            report = evaluate_gates(
+                load_policy(GATES_PATH),
+                request=request,
+                result=judged.result,
+                evaluation_run_id=str(judged.evaluation.id),
+            )
+            return (
+                report.outcome.value,
+                judged.result.verdict.value,
+                [f"{item.rule}={item.outcome.value}" for item in report.results],
+            )
+
+    outcome, verdict, rules = asyncio.run(scenario())
+
+    assert verdict == "ACCEPTED"
+    assert outcome == "PASS", rules
+    assert "held-out=PASS" in rules
+    assert not [rule for rule in rules if rule.endswith("FAIL")]

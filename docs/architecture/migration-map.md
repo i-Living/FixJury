@@ -119,7 +119,7 @@ reported as unlabelled — a synthetic corpus would have to invent the labels th
 | 3.2 | adapter SDK wrapper | `agents/sdk.py`, unit tests | five lifecycle methods over `run()`; adapters unchanged; no DB or global config access |
 | 3.4 | orchestration | `bench.py`, `worker.py`, `cli.py`, integration test | `bench --verify` optionally evaluates; a judge failure marks the evaluation failed, never the run |
 | 3.5 | leaderboard | `leaderboard/`, `cli.py`, tests | entries reference `corpus_version`, `config_hash`, judge config, sample size |
-| 5.1 | quality gates | `evaluation/gates.py`, `cli.py`, tests | a stored evaluation yields `PASS`/`FAIL`/`INCONCLUSIVE`; a confirmed automated failure can never pass; `INCONCLUSIVE` is its own outcome, never a pass; repository-level policy waits for phase 4 |
+| 5.1 | quality gates | `evaluation/gates.py`, `config/quality.yaml`, `cli.py`, tests | a stored evaluation yields `PASS`/`FAIL`/`INCONCLUSIVE`; a confirmed automated failure can never pass; `INCONCLUSIVE` is its own outcome, never a pass; repository-level policy waits for phase 4 |
 | 5.2 | analytics | `metrics/`, API, tests | history, agent performance, cost, escalation statistics from snapshots and evaluations |
 | 5.3 | agent attribution | adapters metadata, tests | unknown attribution stays explicitly unknown |
 | 6.1–6.2 | API and dashboard | `api/`, `web/`, tests + typecheck | evaluation endpoints and pages; existing pages unchanged |

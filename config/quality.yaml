@@ -1,0 +1,43 @@
+# Quality gate policies (PLAN_V1.1 §5.1).
+#
+# A gate answers one question about a stored evaluation: may this patch pass the rules this
+# project set for itself? The outcomes are PASS, FAIL and INCONCLUSIVE, and they mean what
+# SPEC §7.3 says: a confirmed automated failure is a FAIL, an opinion is never one, and
+# missing evidence is INCONCLUSIVE rather than a pass.
+#
+# Repository-level policies are deferred with GitHub Review (decision 6): without a
+# repository there is nothing to attach one to. These policies are keyed by name, so the same
+# file answers for a benchmark profile today and for a repository when review lands.
+#
+# A version change is a policy change: the version is stored with every gate report, so two
+# reports under different versions are never compared silently.
+
+policies:
+  default:
+    version: "1"
+    # A weighted score below this cannot pass, whatever the judge said.
+    min_score: 70
+    # Tools the patch has to have been measured by. A tool, not a command: the corpus
+    # writes its own commands (`pytest tests/test_x.py`), so a policy keyed on those would
+    # stop matching whenever a task changed its paths.
+    required_tools:
+      - pytest
+    # The held-out suite has to exist and has to pass: without it nothing measured whether
+    # the patch actually fixes the defect.
+    require_heldout: true
+    # A confirmed security finding at this severity or above is a FAIL. A judge's security
+    # opinion is a warning: an opinion is not a confirmed vulnerability (SPEC §7.3).
+    security_severity: major
+    # The patch may not exceed this size; a rewrite that happens to pass is not a fix.
+    max_changed_files: 10
+    max_changed_lines: 400
+    # Paths a patch may never touch, whatever the checks say.
+    forbidden_paths:
+      - .github/
+      - .gitlab-ci.yml
+    # Who may judge a gated evaluation, and how much it may cost.
+    allowed_judge_modes:
+      - single
+      - adaptive
+      - multi
+    max_judge_tokens: 200000

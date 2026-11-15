@@ -53,6 +53,9 @@ uv run fixjury review pack && uv run fixjury review serve
 uv run fixjury metrics compute --agent baseline [--verdict-source judge|human]
 uv run fixjury metrics calibration
 uv run fixjury leaderboard --out docs/leaderboard  # rankings from snapshots, with sample sizes
+uv run fixjury gates check --run <id>     # PASS / FAIL / INCONCLUSIVE over a stored evaluation
+uv run fixjury analytics --agent baseline # history, standing and cost from snapshots
+uv run fixjury agents                     # what each integration declares about itself
 (cd web && npm ci)                        # once, Node 20.9 or newer
 uv run fixjury report --charts && uv run fixjury dashboard
 uv run fixjury export --out docs/export   # raw runs/verdicts/rejections as JSONL + hashed manifest
@@ -94,7 +97,8 @@ src/fixjury/verify/        check runner, held-out tests, policy, verdict assembl
 src/fixjury/review/        blind batching, rubric, review page (app.py + templates/)
 src/fixjury/metrics/       metric definitions (compute.py), judge calibration (calibration.py),
                            snapshots (service.py), cost
-src/fixjury/evaluation/    evaluation contracts, structured check evidence, scoring engine
+src/fixjury/evaluation/    evaluation contracts, structured check evidence, scoring engine,
+                           quality gates (gates.py)
 src/fixjury/judge/         AI Judge: provider, validated reply schema, prompts, modes, aggregation
 src/fixjury/leaderboard/   rankings read from snapshots: order, sample floor, revision disclosure
 src/fixjury/report/        markdown report, charts, the snapshot export the metrics page is built from
@@ -102,6 +106,7 @@ src/fixjury/export.py      raw runs/verdicts/rejections as JSONL, with a hashed 
 src/fixjury/prompts/       *.md prompt files (English)
 config/pricing.yaml        pinned rates + pricing_version
 config/evaluation.yaml     scoring profile: criterion weights + profile version
+config/quality.yaml        quality gate policies: score, required tools, size, paths, budget
 dockerfiles/mini/          the mini-swe-agent harness image (one pinned Dockerfile)
 dockerfiles/openhands/     the OpenHands harness image + the headless driver it runs
 benchmarks/tasks/T-xxx/    task.yaml, public fixtures

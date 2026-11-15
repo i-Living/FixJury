@@ -21,6 +21,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fixjury.metrics.analytics import SnapshotRef
 from fixjury.metrics.calibration import as_calibration_payload, calibrate
 from fixjury.metrics.compute import (
     Attempt,
@@ -327,6 +328,38 @@ async def compute_snapshot(
     session.add(snapshot)
     await session.flush()
     return snapshot
+
+
+async def analytics_sources(
+    session: AsyncSession, *, agent: str | None = None
+) -> list[SnapshotRef]:
+    """Every stored snapshot as an analytics source, newest first.
+
+    Analytics reads published numbers and their timestamps; it never re-reads runs. The
+    window is applied by the analytics view, not here, so one query serves every filter.
+    """
+
+    statement = select(MetricSnapshot).order_by(MetricSnapshot.computed_at.desc())
+    if agent is not None:
+        statement = statement.where(MetricSnapshot.agent == agent)
+    rows = (await session.scalars(statement)).all()
+    return [
+        SnapshotRef(
+            snapshot_id=str(row.id),
+            agent=row.agent,
+            computed_at=row.computed_at,
+            verdict_source=str(row.payload.get("verdict_source", "human")),
+            config_hash=row.config_hash,
+            cost_basis=row.cost_basis.value,
+            pricing_version=(
+                None
+                if row.payload.get("pricing_version") is None
+                else str(row.payload.get("pricing_version"))
+            ),
+            payload=row.payload,
+        )
+        for row in rows
+    ]
 
 
 async def snapshot_by_id(session: AsyncSession, snapshot_id: uuid.UUID) -> MetricSnapshot | None:

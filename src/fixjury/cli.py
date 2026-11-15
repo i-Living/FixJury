@@ -3,18 +3,25 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from datetime import date
 from pathlib import Path
 from typing import Annotated
 
 import typer
 import uvicorn
 from docker.errors import DockerException
+from pydantic import ValidationError
 
 from fixjury import __version__, queue
-from fixjury.agents.registry import UnknownAgentError, build_adapter
+from fixjury.agents.metadata import UNKNOWN, describe_all
+from fixjury.agents.registry import UnknownAgentError, build_adapter, known_agents
 from fixjury.api.app import create_app as create_api_app
 from fixjury.bench import BenchError, BenchSummary, drain, enqueue_plan, load_plan
 from fixjury.db import make_engine, make_session_maker, session_scope
+from fixjury.evaluation.contracts import EvaluationConfiguration
+from fixjury.evaluation.gates import GateError, evaluate_gates, load_policy
+from fixjury.evaluation.service import EvaluationError, build_request
+from fixjury.evaluation.store import evaluations_for_run, load_evaluation
 from fixjury.export import MANIFEST_FILENAME, export_rows
 from fixjury.judge.service import (
     JUDGE_FAILURES,
@@ -35,9 +42,11 @@ from fixjury.leaderboard import (
 from fixjury.leaderboard import (
     render_markdown as render_leaderboard,
 )
+from fixjury.metrics.analytics import AnalyticsError, SnapshotRef, build_analytics
 from fixjury.metrics.compute import VerdictSource
 from fixjury.metrics.service import (
     MetricsError,
+    analytics_sources,
     compute_snapshot,
     latest_snapshots,
     snapshot_by_id,
@@ -54,6 +63,7 @@ from fixjury.models import (
 from fixjury.report.charts import render_charts, render_regression_split
 from fixjury.report.dashboard import DashboardError, build_dashboard
 from fixjury.report.markdown import render_agent_table, render_calibration_table, render_report
+from fixjury.report.quality import render_analytics, render_gate_report
 from fixjury.review.app import create_app
 from fixjury.review.pack import pack_batches
 from fixjury.run import RunError, ensure_task, run_task
@@ -582,6 +592,135 @@ def leaderboard(
             encoding="utf-8",
         )
         typer.echo(f"wrote {target} and leaderboard.json")
+
+
+gates_app = typer.Typer(no_args_is_help=True, add_completion=False)
+app.add_typer(gates_app, name="gates")
+
+
+@gates_app.command("check")
+def gates_check(
+    run_id: Annotated[str, typer.Option("--run", help="Run id whose evaluation is gated.")],
+    policy: Annotated[
+        str, typer.Option("--policy", help="Policy name in the config file.")
+    ] = "default",
+    config: Annotated[Path, typer.Option("--config", help="Quality policy file.")] = Path(
+        "config/quality.yaml"
+    ),
+    corpus: Annotated[Path, typer.Option("--corpus", help="Corpus root.")] = Path("benchmarks"),
+) -> None:
+    """Apply the quality gates to a run's stored evaluation (PASS / FAIL / INCONCLUSIVE)."""
+
+    try:
+        identifier = uuid.UUID(run_id)
+    except ValueError as exc:
+        typer.echo(f"not a run id: {run_id!r}", err=True)
+        raise typer.Exit(code=2) from exc
+
+    async def go() -> str:
+        engine = make_engine()
+        try:
+            async with session_scope(make_session_maker(engine)) as session:
+                evaluations = await evaluations_for_run(session, identifier)
+                if not evaluations:
+                    raise GateError(
+                        f"run {identifier} has no evaluation: judge it before gating it"
+                    )
+                newest = evaluations[0]
+                stored = await load_evaluation(session, newest.id)
+                if stored is None or stored.result is None:
+                    # A failed evaluation recorded a reason, not a verdict; there is nothing
+                    # to gate and calling it a pass would publish an outage as a success.
+                    raise GateError(
+                        f"evaluation {newest.id} has no result: "
+                        f"{newest.error or 'a failed evaluation cannot pass a gate'}"
+                    )
+                request = await build_request(
+                    session,
+                    run_id=identifier,
+                    corpus_root=corpus,
+                    config=EvaluationConfiguration.model_validate(newest.config),
+                )
+                report = evaluate_gates(
+                    load_policy(config, name=policy),
+                    request=request,
+                    result=stored.result,
+                    evaluation_run_id=str(newest.id),
+                )
+                return render_gate_report(report)
+        finally:
+            await engine.dispose()
+
+    try:
+        text = asyncio.run(go())
+    except (GateError, EvaluationError, ValidationError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    typer.echo(text)
+
+
+@app.command()
+def analytics(
+    agent: Annotated[str | None, typer.Option("--agent", help="Filter by agent.")] = None,
+    since: Annotated[str | None, typer.Option("--since", help="First day, YYYY-MM-DD.")] = None,
+    until: Annotated[str | None, typer.Option("--until", help="Last day, YYYY-MM-DD.")] = None,
+    out: Annotated[
+        Path | None, typer.Option("--out", help="Write the report to this directory.")
+    ] = None,
+) -> None:
+    """Evaluation history, agent standing, cost and judge statistics from snapshots."""
+
+    try:
+        start = date.fromisoformat(since) if since else None
+        end = date.fromisoformat(until) if until else None
+    except ValueError as exc:
+        typer.echo(f"a date must look like YYYY-MM-DD: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    if (since and start is None) or (until and end is None):
+        typer.echo("a date must look like YYYY-MM-DD", err=True)
+        raise typer.Exit(code=2)
+
+    async def go() -> list[SnapshotRef]:
+        engine = make_engine()
+        try:
+            async with session_scope(make_session_maker(engine)) as session:
+                return await analytics_sources(session, agent=agent)
+        finally:
+            await engine.dispose()
+
+    sources = asyncio.run(go())
+    try:
+        report = build_analytics(sources, agent=agent, since=start, until=end)
+    except AnalyticsError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    text = render_analytics(report)
+    typer.echo(text)
+    if out is not None:
+        out.mkdir(parents=True, exist_ok=True)
+        target = out / "README.md"
+        target.write_text(text + "\n", encoding="utf-8")
+        typer.echo(f"wrote {target}")
+
+
+@app.command()
+def agents() -> None:
+    """List the registered integrations and what the platform can honestly say about them."""
+
+    described = describe_all(known_agents())
+    typer.echo("| Agent | Version | Kind | Image | Attribution |")
+    typer.echo("| --- | --- | --- | --- | --- |")
+    for item in described:
+        typer.echo(
+            f"| {item.name} | {item.version} | {item.kind} | {item.image or '-'} "
+            f"| {item.attribution} |"
+        )
+    if any(not item.known for item in described):
+        typer.echo("")
+        typer.echo(
+            f"`{UNKNOWN}` means the platform cannot attribute the run: no version or image is "
+            "declared, and it is recorded as unknown rather than guessed."
+        )
 
 
 @app.command()
