@@ -165,8 +165,23 @@ def test_re_verification_keeps_the_human_review(monkeypatch: pytest.MonkeyPatch)
             first.human_verdict = HumanVerdict.accept
             first.human_reviewer = "owner"
             first.batch_id = "batch-13"
+            session.add(
+                Rejection(
+                    run_id=run.id,
+                    source=RejectionSource.human,
+                    code=RejectionCode.NO_REGRESSION_TEST,
+                    note="the reviewer wants a regression test",
+                )
+            )
             await session.flush()
-            return await service.verify_run(session, run.id, corpus_root=CORPUS)
+            second = await service.verify_run(session, run.id, corpus_root=CORPUS)
+            kept = await session.scalar(
+                select(func.count())
+                .select_from(Rejection)
+                .where(Rejection.run_id == run.id, Rejection.source == RejectionSource.human)
+            )
+            assert int(kept or 0) == 1, "a reviewer's rejection survives re-verification"
+            return second
 
     verdict = asyncio.run(scenario())
 
