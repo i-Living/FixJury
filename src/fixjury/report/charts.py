@@ -34,13 +34,22 @@ def _numbers(payload: Mapping[str, object]) -> Mapping[str, object]:
     return block if isinstance(block, Mapping) else {}
 
 
-def _rate(payload: Mapping[str, object], key: str) -> float | None:
-    value = _metrics(payload).get(key)
+def _value(payload: Mapping[str, object], key: str, *, legacy: str) -> object:
+    """A V1.1 key, or the name the same number had before the verdict source existed."""
+
+    metrics = _metrics(payload)
+    return metrics[key] if key in metrics else metrics.get(legacy)
+
+
+def _rate(payload: Mapping[str, object], key: str, *, legacy: str) -> float | None:
+    value = _value(payload, key, legacy=legacy)
     return float(value) if isinstance(value, int | float) else None
 
 
-def _interval(payload: Mapping[str, object], key: str) -> tuple[float, float] | None:
-    block = _metrics(payload).get(key)
+def _interval(
+    payload: Mapping[str, object], key: str, *, legacy: str
+) -> tuple[float, float] | None:
+    block = _value(payload, key, legacy=legacy)
     if not isinstance(block, Mapping):
         return None
     low, high = block.get("low"), block.get("high")
@@ -137,17 +146,37 @@ def _bar_chart(
 def render_charts(payloads: Sequence[Mapping[str, object]], out_dir: Path) -> dict[str, Path]:
     """Write the three charts and return their paths by name."""
 
-    labels = [str(payload.get("agent", "?")) for payload in payloads]
-    acceptance = [_rate(payload, "human_acceptance_rate") for payload in payloads]
-    intervals = [_interval(payload, "human_acceptance_ci") for payload in payloads]
-    regression_free = [_rate(payload, "regression_free_acceptance_rate") for payload in payloads]
-    cost = [_rate(payload, "cost_per_accepted_fix") for payload in payloads]
+    # The verdict source is part of the identity of a series: a human series and a judge
+    # series are two measurements, and a bare agent name would draw them as the same one.
+    labels = [
+        f"{payload.get('agent', '?')} ({payload.get('verdict_source', 'human')})"
+        for payload in payloads
+    ]
+    acceptance = [
+        _rate(payload, "acceptance_rate", legacy="human_acceptance_rate") for payload in payloads
+    ]
+    intervals = [
+        _interval(payload, "acceptance_ci", legacy="human_acceptance_ci") for payload in payloads
+    ]
+    regression_free = [
+        _rate(
+            payload,
+            "regression_free_acceptance_rate",
+            legacy="regression_free_acceptance_rate",
+        )
+        for payload in payloads
+    ]
+    cost = [
+        _rate(payload, "cost_per_accepted_fix", legacy="cost_per_accepted_fix")
+        for payload in payloads
+    ]
+    sources = sorted({str(payload.get("verdict_source", "human")) for payload in payloads})
 
     charts = {
         "acceptance": _bar_chart(
             labels,
             acceptance,
-            title="Human acceptance, 95% Wilson interval",
+            title=f"Acceptance ({', '.join(sources)}), 95% Wilson interval",
             ylabel="share of pairs",
             path=out_dir / "acceptance.png",
             intervals=intervals,
@@ -196,7 +225,10 @@ def corpus_split(payload: Mapping[str, object]) -> dict[str, float | None]:
 def render_regression_split(payloads: Sequence[Mapping[str, object]], out_dir: Path) -> Path:
     """Stacked bars: accepted and regression-free, accepted but not, not accepted."""
 
-    labels = [str(payload.get("agent", "?")) for payload in payloads]
+    labels = [
+        f"{payload.get('agent', '?')} ({payload.get('verdict_source', 'human')})"
+        for payload in payloads
+    ]
     splits = [corpus_split(payload) for payload in payloads]
     # A snapshot without a reviewed pair has no split to draw; its bar is a gap.
     measured = [split for split in splits if None not in split.values()]

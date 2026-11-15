@@ -110,7 +110,12 @@ demonstrate before the next one starts.
 | 2.4 | escalation and budgets | `judge/escalation.py`, unit tests | each trigger fires once per round; exhausted budget yields `INCONCLUSIVE` |
 | 2.5 | aggregation and critical rules | `judge/aggregate.py`, unit tests | `ACCEPTED` impossible with a failed automated check; `INCONCLUSIVE` never becomes `ACCEPTED` |
 | 2.6 | observability | `judge/evaluator.py`, persistence, integration test | provider, model, prompt version, config hash, tokens, cost and latency stored per assessment |
-| 2.7 | calibration | `metrics/compute.py`, `tests/unit/test_metrics_judge.py` | false acceptance/rejection, agreement, escalation frequency computed from rows; missing human labels reported as missing |
+| 2.7 | calibration | `metrics/calibration.py`, `metrics/compute.py`, `tests/unit/test_metrics_calibration.py` | false acceptance/rejection, agreement, escalation frequency computed from rows; missing human labels reported as missing |
+
+The calibration runs over the judged corpus rather than a synthetic dataset: with decision 1 the
+standard workflow has no human labels, and the held-out suite is the only label no model produced.
+Every judged pair with a held-out outcome is therefore a known example, and a pair without one is
+reported as unlabelled — a synthetic corpus would have to invent the labels this one already has.
 | 3.2 | adapter SDK wrapper | `agents/sdk.py`, unit tests | five lifecycle methods over `run()`; adapters unchanged; no DB or global config access |
 | 3.4 | orchestration | `bench.py`, `worker.py`, `cli.py`, integration test | `bench --verify` optionally evaluates; a judge failure marks the evaluation failed, never the run |
 | 3.5 | leaderboard | `leaderboard/`, `cli.py`, tests | entries reference `corpus_version`, `config_hash`, judge config, sample size |
@@ -121,10 +126,12 @@ demonstrate before the next one starts.
 | 7.x | release | docs, compose, runbook | full chain green, migration on a clean database, USAGE updated |
 
 **Landed so far:** 0.1–0.3 (this document set), 1.1–1.4 (contracts, coverage and structured check evidence,
-scoring engine, evaluation persistence — revisions `0003_verdict_evidence` and `0004_evaluation_core`) and
+scoring engine, evaluation persistence — revisions `0003_verdict_evidence` and `0004_evaluation_core`),
 2.1–2.6 (provider, validated reply schema, versioned prompts, three modes, escalation and budgets,
-aggregation, per-assessment observability — revision `0005_judge_assessments`). Task 2.7 (calibration
-metrics) has no task where the numbers would be read yet: it lands with the metrics extension in phase 3.
+aggregation, per-assessment observability — revision `0005_judge_assessments`) and 2.7 with the metrics
+extension (calibration against the held-out labels, `verdict_source`, judge usage beside the agent's).
+A snapshot without `verdict_source` is a human series: the V1 numbers stay readable and are never mixed
+into the judge's denominators.
 
 ## 5. Compatibility guarantees
 

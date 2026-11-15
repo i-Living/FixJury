@@ -35,6 +35,7 @@ from fixjury.leaderboard import (
 from fixjury.leaderboard import (
     render_markdown as render_leaderboard,
 )
+from fixjury.metrics.compute import VerdictSource
 from fixjury.metrics.service import (
     MetricsError,
     compute_snapshot,
@@ -52,7 +53,7 @@ from fixjury.models import (
 )
 from fixjury.report.charts import render_charts, render_regression_split
 from fixjury.report.dashboard import DashboardError, build_dashboard
-from fixjury.report.markdown import render_agent_table, render_report
+from fixjury.report.markdown import render_agent_table, render_calibration_table, render_report
 from fixjury.review.app import create_app
 from fixjury.review.pack import pack_batches
 from fixjury.run import RunError, ensure_task, run_task
@@ -376,8 +377,15 @@ def metrics_compute(
     cost_basis: Annotated[
         str, typer.Option("--cost-basis", help="list_price or amortized.")
     ] = "list_price",
+    verdict_source: Annotated[
+        str,
+        typer.Option(
+            "--verdict-source",
+            help="Which verdict acceptance reads: judge (V1.1) or human (the V1 series).",
+        ),
+    ] = "judge",
 ) -> None:
-    """Compute one snapshot from runs + verdicts and store it."""
+    """Compute one snapshot from runs + verdicts + evaluations and store it."""
 
     try:
         basis = CostBasis(cost_basis)
@@ -385,12 +393,20 @@ def metrics_compute(
         allowed = ", ".join(item.value for item in CostBasis)
         typer.echo(f"cost basis must be one of {allowed}", err=True)
         raise typer.Exit(code=2) from exc
+    try:
+        source = VerdictSource(verdict_source)
+    except ValueError as exc:
+        allowed = ", ".join(item.value for item in VerdictSource)
+        typer.echo(f"verdict source must be one of {allowed}", err=True)
+        raise typer.Exit(code=2) from exc
 
     async def go() -> MetricSnapshot:
         engine = make_engine()
         try:
             async with session_scope(make_session_maker(engine)) as session:
-                return await compute_snapshot(session, agent=agent, cost_basis=basis)
+                return await compute_snapshot(
+                    session, agent=agent, cost_basis=basis, verdict_source=source
+                )
         finally:
             await engine.dispose()
 
@@ -399,8 +415,39 @@ def metrics_compute(
     except MetricsError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
-    typer.echo(f"snapshot {snapshot.id} agent={snapshot.agent} basis={snapshot.cost_basis.value}")
+    typer.echo(
+        f"snapshot {snapshot.id} agent={snapshot.agent} basis={snapshot.cost_basis.value} "
+        f"verdict_source={source.value}"
+    )
     typer.echo(render_agent_table(snapshot.payload))
+
+
+@metrics_app.command("calibration")
+def metrics_calibration(
+    agent: Annotated[str | None, typer.Option("--agent", help="Filter by agent.")] = None,
+) -> None:
+    """Print how the judge behaved against the held-out labels, from stored snapshots."""
+
+    async def go() -> list[MetricSnapshot]:
+        engine = make_engine()
+        try:
+            async with session_scope(make_session_maker(engine)) as session:
+                return await latest_snapshots(session, agent=agent)
+        finally:
+            await engine.dispose()
+
+    snapshots = asyncio.run(go())
+    if not snapshots:
+        typer.echo("no snapshots yet: run `fixjury metrics compute` first", err=True)
+        raise typer.Exit(code=1)
+    section = render_calibration_table([snapshot.payload for snapshot in snapshots])
+    if not section:
+        typer.echo(
+            "no judged pairs in these snapshots: calibrate against `fixjury judge evaluate` first",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    typer.echo("\n".join(section).lstrip())
 
 
 @metrics_app.command("show")

@@ -13,8 +13,20 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fixjury.db import make_engine
+from fixjury.metrics.compute import VerdictSource
 from fixjury.metrics.service import compute_snapshot, latest_snapshots, total_cost
-from fixjury.models import CostBasis, MetricSnapshot, Run, RunStatus, Verdict
+from fixjury.models import (
+    CostBasis,
+    EvaluationResult,
+    EvaluationRun,
+    EvaluationStatus,
+    EvaluationVerdict,
+    MetricSnapshot,
+    Run,
+    RunStatus,
+    Task,
+    Verdict,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -122,7 +134,9 @@ def test_a_snapshot_is_computed_once_and_stored(monkeypatch: pytest.MonkeyPatch)
             await add_run(
                 session, task_id="T-003", attempt=1, status=RunStatus.infra_failed, cost="0"
             )
-            snapshot = await compute_snapshot(session, agent="metrics-test")
+            snapshot = await compute_snapshot(
+                session, agent="metrics-test", verdict_source=VerdictSource.human
+            )
             assert isinstance(snapshot.payload, dict)
             return snapshot
 
@@ -130,6 +144,9 @@ def test_a_snapshot_is_computed_once_and_stored(monkeypatch: pytest.MonkeyPatch)
 
     payload = snapshot.payload
     assert payload["agent"] == "metrics-test"
+    # The payload names the configuration it was computed under: a leaderboard entry that
+    # holds only the JSON still says which runs it describes.
+    assert payload["config_hash"] == snapshot.config_hash
     assert payload["cost_basis"] == "list_price"
     denominators = payload["denominators"]
     assert isinstance(denominators, dict)
@@ -150,12 +167,15 @@ def test_the_snapshot_cost_total_matches_the_runs(monkeypatch: pytest.MonkeyPatc
         async with rolled_back_session() as session:
             await add_run(session, task_id="T-001", human="accept", cost="0.75")
             await add_run(session, task_id="T-002", attempt=1, human="reject", cost="1.25")
-            snapshot = await compute_snapshot(session, agent="metrics-test")
+            snapshot = await compute_snapshot(
+                session, agent="metrics-test", verdict_source=VerdictSource.human
+            )
             rows = list(
                 (
                     await session.execute(
-                        select(Run, Verdict)
+                        select(Run, Verdict, Task)
                         .outerjoin(Verdict, Verdict.run_id == Run.id)
+                        .outerjoin(Task, Task.id == Run.task_id)
                         .where(Run.agent == "metrics-test")
                     )
                 ).all()
@@ -175,9 +195,14 @@ def test_a_second_computation_creates_a_second_snapshot(monkeypatch: pytest.Monk
     async def scenario() -> tuple[int, int]:
         async with rolled_back_session() as session:
             await add_run(session, task_id="T-001", human="accept")
-            first = await compute_snapshot(session, agent="metrics-test")
+            first = await compute_snapshot(
+                session, agent="metrics-test", verdict_source=VerdictSource.human
+            )
             second = await compute_snapshot(
-                session, agent="metrics-test", cost_basis=CostBasis.amortized
+                session,
+                agent="metrics-test",
+                cost_basis=CostBasis.amortized,
+                verdict_source=VerdictSource.human,
             )
             stored = await session.scalar(
                 select(func.count())
@@ -199,6 +224,155 @@ def test_an_agent_without_runs_is_refused() -> None:
     async def scenario() -> None:
         async with rolled_back_session() as session:
             with pytest.raises(Exception, match="no runs"):
-                await compute_snapshot(session, agent="nobody")
+                await compute_snapshot(session, agent="nobody", verdict_source=VerdictSource.human)
 
     asyncio.run(scenario())
+
+
+async def add_evaluation(
+    session: AsyncSession,
+    run: Run,
+    *,
+    verdict: EvaluationVerdict = EvaluationVerdict.ACCEPTED,
+    confidence: str = "0.900",
+    votes: tuple[str, ...] = ("ACCEPTED",),
+    escalated: bool = False,
+) -> EvaluationRun:
+    """A stored judge evaluation, as ``fixjury judge evaluate`` writes one."""
+
+    evaluation = EvaluationRun(
+        source="benchmark",
+        subject_ref=run.task_id,
+        task_id=run.task_id,
+        run_id=run.id,
+        config={"mode": "single", "schema_version": "1.0"},
+        config_hash="d" * 64,
+        scoring_profile="default",
+        scoring_version="1",
+        assessments=[
+            {
+                "judge_id": f"judge-{index}",
+                "provider": "opencode-go",
+                "model": "strong-model",
+                "prompt_version": "1",
+                "verdict": vote,
+                "overall": 88.0,
+                "confidence": 0.9,
+                "tokens_in": 800,
+                "tokens_out": 200,
+                "cost_list_usd": "0.1250",
+                "latency_ms": 1500,
+                "escalated": escalated,
+            }
+            for index, vote in enumerate(votes)
+        ],
+        judge_config_hash="e" * 64,
+        status=EvaluationStatus.finished,
+        tokens_in=800 * len(votes),
+        tokens_out=200 * len(votes),
+        cost_list_usd=Decimal("0.1250") * len(votes),
+        pricing_version="unpriced-2026-11",
+        finished_at=datetime.now(UTC),
+    )
+    session.add(evaluation)
+    await session.flush()
+    session.add(
+        EvaluationResult(
+            evaluation_run_id=evaluation.id,
+            verdict=verdict,
+            judge_verdict=verdict,
+            overall_score=Decimal("88.00"),
+            confidence=Decimal(confidence),
+            criteria=[],
+            reasoning_summary="checked",
+            limitations=[],
+            escalated=escalated,
+        )
+    )
+    await session.flush()
+    return evaluation
+
+
+def test_a_judged_snapshot_reads_the_judges_verdict_and_its_calibration() -> None:
+    """PLAN_V1.1 §2.7: the numbers a benchmark reports about its own judge."""
+
+    require_postgres()
+
+    async def scenario() -> dict[str, object]:
+        async with rolled_back_session() as session:
+            accepted = await add_run(session, task_id="T-001", human=None, heldout=True)
+            rejected = await add_run(session, task_id="T-002", human=None, heldout=False)
+            await add_evaluation(session, accepted, verdict=EvaluationVerdict.ACCEPTED)
+            await add_evaluation(session, rejected, verdict=EvaluationVerdict.REJECTED)
+            snapshot = await compute_snapshot(session, agent="metrics-test")
+            return dict(snapshot.payload)
+
+    payload = asyncio.run(scenario())
+
+    assert payload["verdict_source"] == "judge"
+    denominators = payload["denominators"]
+    assert isinstance(denominators, dict)
+    assert denominators["decided_pairs"] == 2
+    assert denominators["accepted"] == 1
+    metrics = payload["metrics"]
+    assert isinstance(metrics, dict)
+    assert metrics["acceptance_rate"] == 0.5
+    # Judge usage is its own line: the agent's tokens are not bills from the judge.
+    assert metrics["judge_tokens_total"] == 2000
+    assert Decimal(str(metrics["judge_cost_total"])) == Decimal("0.2500")
+
+    judge = payload["judge"]
+    assert isinstance(judge, dict)
+    assert judge["evaluations"] == 2
+    assert judge["models"] == ["strong-model"]
+    assert judge["prompt_versions"] == ["1"]
+    assert judge["judge_config_hashes"] == ["e" * 64]
+
+    calibration = payload["calibration"]
+    assert isinstance(calibration, dict)
+    assert calibration["labeled_runs"] == 2
+    false_rejection = calibration["false_rejection"]
+    assert isinstance(false_rejection, dict)
+    assert false_rejection == {"count": 0, "of": 1, "rate": 0.0}
+    assert calibration["meets_thresholds"] is True
+
+
+def test_a_snapshot_names_the_task_difficulty_it_grouped_by() -> None:
+    require_postgres()
+
+    async def scenario() -> dict[str, object]:
+        async with rolled_back_session() as session:
+            run = await add_run(session, task_id="T-001", human=None, heldout=True)
+            await add_evaluation(session, run)
+            snapshot = await compute_snapshot(session, agent="metrics-test")
+            return dict(snapshot.payload)
+
+    payload = asyncio.run(scenario())
+
+    groups = payload["groups"]
+    assert isinstance(groups, dict)
+    difficulty = groups["difficulty"]
+    assert isinstance(difficulty, dict)
+    # T-001 is a medium task in the frozen corpus; the group carries its own denominators.
+    assert difficulty["medium"]["denominators"]["pairs"] == 1
+    assert difficulty["medium"]["metrics"]["acceptance_rate"] == 1.0
+
+
+def test_a_corpus_with_no_judged_pair_is_refused_not_reported_as_zero() -> None:
+    """An all-null acceptance rate would read as "the judge accepted nothing"."""
+
+    require_postgres()
+
+    async def scenario() -> str:
+        async with rolled_back_session() as session:
+            await add_run(session, task_id="T-001", human="accept")
+            try:
+                await compute_snapshot(session, agent="metrics-test")
+            except Exception as exc:
+                return str(exc)
+            raise AssertionError("an unjudged corpus must not produce a judge snapshot")
+
+    message = asyncio.run(scenario())
+
+    assert "no judged pairs" in message
+    assert "--verdict-source human" in message
