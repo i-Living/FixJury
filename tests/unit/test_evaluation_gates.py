@@ -73,6 +73,8 @@ def request(
     diff: str = DIFF,
     policy_pass: bool = True,
     policy_violations: tuple[str, ...] = (),
+    allowed_paths: tuple[str, ...] = ("app.py", "tests/"),
+    forbidden: tuple[str, ...] = ("pyproject.toml",),
 ) -> EvaluationRequest:
     return EvaluationRequest(
         subject_ref="T-001",
@@ -84,6 +86,8 @@ def request(
         checks=checks,
         policy_pass=policy_pass,
         policy_violations=policy_violations,
+        allowed_paths=allowed_paths,
+        forbidden=forbidden,
         config=EvaluationConfiguration(mode=mode),  # type: ignore[arg-type]
     )
 
@@ -583,3 +587,31 @@ def test_a_path_policy_violation_is_a_confirmed_failure() -> None:
     assert report.outcome is GateOutcome.FAIL
     assert policy_result.confirmed is True
     assert "EXTRA_FILES" in policy_result.detail
+
+
+def test_a_tightened_task_policy_fails_a_verdict_that_recorded_a_pass() -> None:
+    """`allowed_paths` lives in the task file; a stored PASS is not a statement about it."""
+
+    documented_request = request(
+        diff=(
+            "diff --git a/scripts/tool.py b/scripts/tool.py\n"
+            "--- a/scripts/tool.py\n"
+            "+++ b/scripts/tool.py\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n"
+        ),
+        allowed_paths=("app.py",),
+    )
+
+    report = evaluate_gates(
+        GatePolicy(name="test", version="1"),
+        request=documented_request,
+        result=result(),
+        evaluation_run_id="evaluation-1",
+    )
+
+    policy_result = next(item for item in report.results if item.rule == "policy")
+    assert report.outcome is GateOutcome.FAIL
+    assert policy_result.confirmed is True
+    assert "scripts/tool.py" in policy_result.detail

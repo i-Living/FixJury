@@ -102,6 +102,8 @@ async def build_request(
         checks=checks,
         policy_pass=verdict.policy_pass,
         policy_violations=await _policy_violations(session, run_id),
+        allowed_paths=tuple(document.allowed_paths),
+        forbidden=tuple(document.forbidden),
         # The configuration records which evidence it was made from, so a gate can tell an
         # evaluation of this verdict from an evaluation of an older one.
         config=configuration.model_copy(

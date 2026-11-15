@@ -228,6 +228,10 @@ class EvaluationRequest(BaseModel):
     checks: tuple[CheckResult, ...] = ()
     policy_pass: bool = True
     policy_violations: tuple[str, ...] = ()
+    #: The task's path rules, copied from the task document. A gate re-checks the diff against
+    #: them instead of trusting a boolean recorded under whatever policy was in force then.
+    allowed_paths: tuple[str, ...] = ()
+    forbidden: tuple[str, ...] = ()
     config: EvaluationConfiguration = EvaluationConfiguration()
 
     @field_validator("base_commit")

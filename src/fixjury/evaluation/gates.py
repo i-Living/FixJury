@@ -36,7 +36,7 @@ from fixjury.evaluation.contracts import (
 )
 from fixjury.models import EvaluationVerdict, FindingSeverity, FindingSource
 from fixjury.tasks.schema import CheckTool
-from fixjury.verify.policy import ChangedFile, parse_changed_files
+from fixjury.verify.policy import ChangedFile, check_policy, parse_changed_files
 
 
 class GateError(RuntimeError):
@@ -341,19 +341,30 @@ def _gate_verdict(result: EvaluationResult) -> GateResult:
 
 
 def _gate_policy(request: EvaluationRequest) -> GateResult:
-    """The task's path policy, read from the request the gate built now.
+    """The task's path policy, re-checked against the diff the gate holds.
 
-    It is checked here rather than trusted from the stored result: `allowed_paths` and
-    `forbidden` come from the task file, and a stored PASS from an earlier task version is not
-    evidence about the policy in force.
+    Two answers matter and either can fail it: what verification decided (``policy_pass``) and
+    what the task's rules say now. `allowed_paths` and `forbidden` come from the task document,
+    so a rule that tightened after the run was verified is caught here instead of trusted from a
+    boolean recorded under the old one.
     """
 
-    if request.policy_pass:
+    current = check_policy(
+        request.diff,
+        allowed_paths=request.allowed_paths,
+        forbidden=request.forbidden,
+    )
+    if request.policy_pass and current.passed:
         return GateResult(
             rule="policy", outcome=GateOutcome.PASS, detail="inside the allowed paths"
         )
-    violations = "; ".join(request.policy_violations) or "the diff leaves the paths the task allows"
-    return GateResult(rule="policy", outcome=GateOutcome.FAIL, detail=violations, confirmed=True)
+    recorded = "; ".join(request.policy_violations)
+    recomputed = "; ".join(f"{item.code.value}: {item.note}" for item in current.violations)
+    detail = (
+        "; ".join(part for part in (recorded, recomputed) if part)
+        or "the diff leaves the allowed paths"
+    )
+    return GateResult(rule="policy", outcome=GateOutcome.FAIL, detail=detail, confirmed=True)
 
 
 def _gate_size(
